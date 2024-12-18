@@ -74,22 +74,30 @@ export class BlockDownloader {
 	}
 	
 	public static async fetchBlockByHeight(height: number): Promise<Buffer | null> {
-		const blockHashBuffer = Buffer.from(await (await fetch(
-			`${process.env.BITCOIN_REST_URL}/blockhashbyheight/${height}.bin`
-		)).arrayBuffer());
-		if(blockHashBuffer.length !== 32) {
-			console.log(`Block not found: ${height}`);
-			return null;
+		const maxRetry = 5;
+		for(let i=0; i<maxRetry; i++) {
+			const blockHashBuffer = Buffer.from(await (await fetch(
+				`${process.env.BITCOIN_REST_URL}/blockhashbyheight/${height}.bin`
+			)).arrayBuffer());
+			if(blockHashBuffer.length !== 32) {
+				if(blockHashBuffer.toString('utf-8') === 'Block height out of range') {
+					return null;
+				}
+				console.log(`Failed to fetch block hash: ${height}`);
+				continue;
+			}
+			const blockHash = blockHashBuffer.reverse().toString('hex');
+			const blockBuffer = Buffer.from(await (await fetch(
+				`${process.env.BITCOIN_REST_URL}/block/${blockHash}.bin`
+			)).arrayBuffer());
+			if(blockBuffer.length <= 80) {
+				console.log('Block length invalid:', blockBuffer.toString('utf-8'));
+				await setTimeout(1000);
+				continue;
+			}
+			return blockBuffer;
 		}
-		const blockHash = blockHashBuffer.reverse().toString('hex');
-		const blockBuffer = Buffer.from(await (await fetch(
-			`${process.env.BITCOIN_REST_URL}/block/${blockHash}.bin`
-		)).arrayBuffer());
-		if(blockBuffer.length <= 80) {
-			console.log('Block length invalid:', blockBuffer.toString('utf-8'));
-			return null;
-		}
-		return blockBuffer;
+		throw new Error('Failed to fetch block: max retry count reached.');
 	}
 	
 	public async run(startingHeight: number) {
@@ -98,9 +106,10 @@ export class BlockDownloader {
 		// Fetch blocks.
 		(async () => {
 			for(;;) {
-				if(this.blockCount >= this.maxBlocks) {
+				//console.log(this.blockCount, this.runningCount, this.completedCount, this.maxBlocks);
+				if(this.blockCount >= this.maxBlocks || this.runningCount >= this.concurrency) {
 					await setTimeout(100);
-					break;
+					continue;
 				}
 				for(let i=this.runningCount; i<this.concurrency; i++) {
 					const nextHeight = this._nextHeight;
@@ -117,7 +126,7 @@ export class BlockDownloader {
 					};
 					this._blocks.set(this._nextHeight, blockData);
 					this._nextHeight++;
-					await setTimeout(100);
+					//await setTimeout(10);
 				}
 			}
 		})();

@@ -3,14 +3,17 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "syncer": "ts-node ./bin/syncer.ts",
+    "syncer": "npm run clean && npm run build && node ./dist/bin/syncer.js",
     "server": "ts-node ./bin/server.ts",
+    "build": "tsc",
+    "clean": "rm -rf ./dist",
     "test": "jest"
   },
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "await-semaphore": "^0.1.3",
     "bitcoinjs-lib": "^6.1.7",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",

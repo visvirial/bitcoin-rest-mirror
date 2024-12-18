@@ -94,7 +94,7 @@ export class Client {
 	 * High-level operations.
 	 */
 	
-	public async acceptBlock(height: number, blockBuffer: Buffer) {
+	public async acceptBlock(height: number, blockBuffer: Buffer, setNextBlockHeight = true) {
 		const block = Block.fromBuffer(blockBuffer);
 		const blockHash = block.getHash();
 		if(block.transactions === undefined) {
@@ -109,7 +109,9 @@ export class Client {
 		// Register block header.
 		await this.setBlockHeader(blockHash, block.toBuffer(true));
 		// Set next block height.
-		await this.setNextBlockHeight(height + 1);
+		if(setNextBlockHeight) {
+			await this.setNextBlockHeight(height + 1);
+		}
 	}
 	
 	public async getBlockByHash(hash: Buffer): Promise<Buffer | null> {
