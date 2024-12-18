@@ -11,8 +11,6 @@ import { Client } from './Client';
 
 export class Syncer {
 	
-	private _downloader: BlockDownloader = new BlockDownloader();
-	
 	private _workers: Worker[] = [];
 	private _currentWorkerIndex = 0;
 	
@@ -21,6 +19,7 @@ export class Syncer {
 	private _jobCount = 0;
 	
 	constructor(
+		private _downloader: BlockDownloader,
 		private _client: Client,
 	) {
 	}

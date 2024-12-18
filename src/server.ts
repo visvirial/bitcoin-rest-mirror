@@ -6,7 +6,7 @@ import {
 
 import { Client } from '../src/Client';
 
-export const respond = (res: express.Response, data: Buffer, toObject: (data: Buffer) => any) => {
+export const respond = (req: express.Request, res: express.Response, data: Buffer, toObject: (data: Buffer) => any) => {
 	switch(req.params.ext) {
 		case 'bin':
 			res.type('application/octet-stream');
@@ -44,7 +44,7 @@ export const getExpressApp = (client: Client) => {
 			res.status(404).send(`${req.params.txId} not found`);
 			return;
 		}
-		respond(res, txBuffer, transactionToObject);
+		respond(req, res, txBuffer, transactionToObject);
 	});
 	app.all('*', (req, res) => {
 		res.type('text/html');

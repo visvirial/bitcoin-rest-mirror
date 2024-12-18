@@ -1,8 +1,6 @@
 
 import { setTimeout } from 'timers/promises';
 
-require('dotenv').config();
-
 export type BlockStatus = 'running' | 'completed' | 'failed';
 
 export interface BlockData {
@@ -19,7 +17,9 @@ export class BlockDownloader {
 	private _nextHeight: number = 0;
 	private _blocks: Map<number, BlockData> = new Map();
 	
-	constructor() {
+	constructor(
+		public readonly restUrl: string,
+	) {
 	}
 	
 	public async shiftBlock() {
@@ -73,11 +73,11 @@ export class BlockDownloader {
 		return this._getStatusCount('failed');
 	}
 	
-	public static async fetchBlockByHeight(height: number): Promise<Buffer | null> {
+	public static async fetchBlockByHeight(restUrl: string, height: number): Promise<Buffer | null> {
 		const maxRetry = 5;
 		for(let i=0; i<maxRetry; i++) {
 			const blockHashBuffer = Buffer.from(await (await fetch(
-				`${process.env.BITCOIN_REST_URL}/blockhashbyheight/${height}.bin`
+				`${restUrl}/blockhashbyheight/${height}.bin`
 			)).arrayBuffer());
 			if(blockHashBuffer.length !== 32) {
 				if(blockHashBuffer.toString('utf-8') === 'Block height out of range') {
@@ -88,7 +88,7 @@ export class BlockDownloader {
 			}
 			const blockHash = blockHashBuffer.reverse().toString('hex');
 			const blockBuffer = Buffer.from(await (await fetch(
-				`${process.env.BITCOIN_REST_URL}/block/${blockHash}.bin`
+				`${restUrl}/block/${blockHash}.bin`
 			)).arrayBuffer());
 			if(blockBuffer.length <= 80) {
 				console.log('Block length invalid:', blockBuffer.toString('utf-8'));
@@ -98,6 +98,10 @@ export class BlockDownloader {
 			return blockBuffer;
 		}
 		throw new Error('Failed to fetch block: max retry count reached.');
+	}
+	
+	public async fetchBlockByHeight(height: number): Promise<Buffer | null> {
+		return BlockDownloader.fetchBlockByHeight(this.restUrl, height);
 	}
 	
 	public async run(startingHeight: number) {
@@ -113,7 +117,7 @@ export class BlockDownloader {
 				}
 				for(let i=this.runningCount; i<this.concurrency; i++) {
 					const nextHeight = this._nextHeight;
-					const blockPromise = BlockDownloader.fetchBlockByHeight(nextHeight);
+					const blockPromise = this.fetchBlockByHeight(nextHeight);
 					blockPromise.then((_) => {
 						const block = this._blocks.get(nextHeight);
 						if(block) {

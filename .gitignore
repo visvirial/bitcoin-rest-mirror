@@ -1,6 +1,7 @@
 
 /coverage
 /dist
+/config.yaml
 
 node_modules
 .env
