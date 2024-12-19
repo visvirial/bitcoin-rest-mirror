@@ -45,7 +45,7 @@ export class Syncer {
 		// Run block downloader.
 		await this._downloader.run(this._nextBlockHeight);
 		// Launch workers.
-		const workerCount = os.cpus().length;
+		const workerCount = os.availableParallelism();
 		const mutex = new Mutex();
 		for(let i=0; i<workerCount; i++) {
 			this._workers.push(new Worker(

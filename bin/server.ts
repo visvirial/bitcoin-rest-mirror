@@ -1,4 +1,7 @@
 
+import os from 'os';
+import cluster from 'cluster';
+
 import express from 'express';
 import {
 	Transaction,
@@ -20,15 +23,22 @@ export const main = async () => {
 		console.log(`Chain not found: ${chainName}`);
 		process.exit(1);
 	}
-	// Initialize client.
-	const client = new Client(config.redisUrl, chainName);
-	const app = getExpressApp(client);
-	// Listen.
-	const port = chainConfig.server?.port || 8000;
-	const host = chainConfig.server?.host || 'localhost';
-	app.listen(port, host, () => {
-		console.log(`Server started on ${port}.`);
-	});
+	if(cluster.isPrimary) {
+		const clusterCount = os.availableParallelism();
+		for(let i=0; i<clusterCount; i++) {
+			cluster.fork();
+		}
+	} else {
+		// Initialize client.
+		const client = new Client(config.redisUrl, chainName);
+		const app = getExpressApp(client);
+		// Listen.
+		const port = chainConfig.server?.port || 8000;
+		const host = chainConfig.server?.host || 'localhost';
+		app.listen(port, host, () => {
+			console.log(`Server started on ${host}:${port}.`);
+		});
+	}
 };
 
 main();
