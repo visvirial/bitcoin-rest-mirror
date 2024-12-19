@@ -1,5 +1,6 @@
 
 import express from 'express';
+import morgan from 'morgan';
 import {
 	Transaction,
 } from 'bitcoinjs-lib';
@@ -38,6 +39,7 @@ export const transactionToObject = (txBuffer: Buffer) => {
 
 export const getExpressApp = (client: Client) => {
 	const app = express();
+	//app.use(morgan('combined'));
 	// Register routes.
 	app.get('/rest/tx/:txId.:ext', async (req, res) => {
 		const txId = Buffer.from(req.params.txId, 'hex');
