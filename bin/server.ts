@@ -21,7 +21,7 @@ export const main = async () => {
 		process.exit(1);
 	}
 	// Initialize client.
-	const client = new Client(config.redisUrl);
+	const client = new Client(config.redisUrl, chainName);
 	const app = getExpressApp(client);
 	// Listen.
 	const port = chainConfig.server?.port || 8000;

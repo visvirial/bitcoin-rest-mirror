@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "syncer": "npm run clean && npm run build && node ./dist/bin/syncer.js",
-    "server": "ts-node ./bin/server.ts",
+    "server": "npm run clean && npm run build && node ./dist/bin/server.js",
     "build": "tsc",
     "clean": "rm -rf ./dist",
     "test": "jest"
