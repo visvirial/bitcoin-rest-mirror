@@ -3,7 +3,6 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::sync::{
     Arc,
-    Mutex,
 };
 use yaml_rust2::{
     Yaml,
@@ -21,23 +20,26 @@ use axum::{
     response::IntoResponse,
 };
 
+#[derive(Clone)]
 pub struct Client {
-    redis_conn: redis::Connection,
+    pool: Arc<r2d2::Pool<redis::Client>>,
     chain: String,
     prefix: String,
 }
 
 impl Client {
-    pub fn new(redis_conn: redis::Connection, chain: String, prefix: Option<String>) -> Self {
+    pub fn new(redis_url: &str, chain: String, prefix: Option<String>) -> Self {
+        let client = redis::Client::open(redis_url).unwrap();
+        let pool = Arc::new(r2d2::Pool::builder().build(client).unwrap());
         Self {
-            redis_conn,
+            pool,
             chain,
             prefix: prefix.unwrap_or("bitcoin-rest-mirror".to_string())
         }
     }
     pub fn get(&mut self, prefix: &str, key: &str) -> Option<Vec<u8>> {
         let key = format!("{}:{}:{}:{}", self.prefix, self.chain, prefix, key);
-        let value: Option<String> = self.redis_conn.get(key).unwrap();
+        let value: Option<String> = self.pool.get().unwrap().get(key).unwrap();
         match value {
             Some(value) => Some(value.into_bytes()),
             None => None
@@ -79,12 +81,12 @@ pub fn parse_id_and_ext(path: &str) -> Result<([u8; 32], String), &'static str> 
     Ok((hash, parts[1].to_string()))
 }
 
-async fn handle_tx(State(state): State<Arc<Mutex<AppState>>>, Path(path): Path<String>) -> impl IntoResponse {
+async fn handle_tx(State(mut state): State<AppState>, Path(path): Path<String>) -> impl IntoResponse {
     let (hash, ext) = match parse_id_and_ext(&path) {
         Ok((hash, ext)) => (hash, ext),
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
-    let tx = match state.lock().unwrap().client.get_transaction(&hash) {
+    let tx = match state.client.get_transaction(&hash) {
         Some(tx) => tx,
         None => return (StatusCode::NOT_FOUND, "Transaction not found".to_string()).into_response(),
     };
@@ -97,6 +99,7 @@ async fn handle_tx(State(state): State<Arc<Mutex<AppState>>>, Path(path): Path<S
     }
 }
 
+#[derive(Clone)]
 pub struct AppState {
     client: Client,
 }
@@ -109,7 +112,7 @@ pub async fn start_server(client: Client, port: u16, host: &str) {
     */
     let app = Router::new()
         .route("/rest/tx/:tx_hash.hex", get(handle_tx))
-        .with_state(Arc::new(Mutex::new(AppState { client  })))
+        .with_state(AppState { client  })
         ;
     let addr = format!("{}:{}", host, port);
     let listener = tokio::net::TcpListener::bind(addr.clone()).await.unwrap();
@@ -130,10 +133,8 @@ async fn main() {
     let config = load_config();
     // Initialize Redis connection.
     let redis_url = config["redisUrl"].as_str().unwrap();
-    let redis = redis::Client::open(redis_url).unwrap();
-    let conn = redis.get_connection().expect("Failed to connect to Redis server");
     // Initialize client.
-    let client = Client::new(conn, chain.clone(), None);
+    let client = Client::new(redis_url, chain.clone(), None);
     // Initialize server.
     let port = config["chains"][chain.as_str()]["server"]["port"].as_i64().unwrap_or(8000);
     let host = config["chains"][chain.as_str()]["server"]["host"].as_str().unwrap_or("localhost");

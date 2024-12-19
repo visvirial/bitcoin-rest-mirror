@@ -134,6 +134,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "hex",
+ "r2d2",
  "redis",
  "tokio",
  "yaml-rust2",

@@ -9,5 +9,6 @@ hex = "0.4"
 tokio = { version = "1", features = ["full"] }
 yaml-rust2 = "0.9"
 axum = "0.7"
+r2d2 = "0.8"
 redis = { version = "0.27", features = ["tokio-comp", "r2d2"] }
 
