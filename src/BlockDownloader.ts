@@ -1,7 +1,7 @@
 
 import { setTimeout } from 'timers/promises';
 
-export type BlockStatus = 'running' | 'completed' | 'failed';
+export type BlockStatus = 'running' | 'completed';
 
 export interface BlockData {
 	status: BlockStatus;
@@ -69,10 +69,6 @@ export class BlockDownloader {
 		return this._getStatusCount('completed');
 	}
 	
-	public get failedCount() {
-		return this._getStatusCount('failed');
-	}
-	
 	public static async fetchBlockByHeight(restUrl: string, height: number): Promise<Buffer | null> {
 		const maxRetry = 5;
 		for(let i=0; i<maxRetry; i++) {
@@ -80,7 +76,7 @@ export class BlockDownloader {
 				`${restUrl}/blockhashbyheight/${height}.bin`
 			)).arrayBuffer());
 			if(blockHashBuffer.length !== 32) {
-				if(blockHashBuffer.toString('utf-8') === 'Block height out of range') {
+				if(blockHashBuffer.toString('utf-8').startsWith('Block height out of range')) {
 					return null;
 				}
 				console.log(`Failed to fetch block hash: ${height}`);
@@ -109,7 +105,8 @@ export class BlockDownloader {
 		this._nextHeight = startingHeight;
 		// Fetch blocks.
 		(async () => {
-			for(;;) {
+			let stop = false;
+			for(; !stop;) {
 				//console.log(this.blockCount, this.runningCount, this.completedCount, this.maxBlocks);
 				if(this.blockCount >= this.maxBlocks || this.runningCount >= this.concurrency) {
 					await setTimeout(100);
@@ -118,10 +115,11 @@ export class BlockDownloader {
 				for(let i=this.runningCount; i<this.concurrency; i++) {
 					const nextHeight = this._nextHeight;
 					const blockPromise = this.fetchBlockByHeight(nextHeight);
-					blockPromise.then((_) => {
+					blockPromise.then((buffer) => {
+						if(!buffer) stop = true;
 						const block = this._blocks.get(nextHeight);
 						if(block) {
-							block.status = block ? 'completed' : 'failed';
+							block.status = 'completed';
 						}
 					});
 					const blockData = {

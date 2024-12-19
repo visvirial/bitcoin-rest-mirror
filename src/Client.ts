@@ -5,7 +5,7 @@ import {
 } from 'bitcoinjs-lib';
 import varuint from 'varuint-bitcoin';
 
-export type RedisPrefix = 'blockHeader' | 'blockTransactionHashes' | 'transaction';
+export type RedisPrefix = 'blockHeader' | 'blockHashByHeight' | 'blockHeightByHash' | 'blockTransactionHashes' | 'transaction';
 
 export class Client {
 	
@@ -66,6 +66,28 @@ export class Client {
 		return await this.get('blockHeader', hash.toString('hex'));
 	}
 	
+	public async setBlockHashByHeight(height: number, hash: Buffer) {
+		await this.set('blockHashByHeight', height.toString(), hash);
+	}
+	
+	public async getBlockHashByHeight(height: number): Promise<Buffer | null> {
+		return await this.get('blockHashByHeight', height.toString());
+	}
+	
+	public async setBlockHeightByHash(height: number, hash: Buffer) {
+		const heightBuffer = Buffer.alloc(4);
+		heightBuffer.writeUInt32LE(height);
+		await this.set('blockHeightByHash', hash.toString('hex'), heightBuffer);
+	}
+	
+	public async getBlockHeightByHash(hash: Buffer): Promise<number | null> {
+		const heightBuffer = await this.get('blockHeightByHash', hash.toString('hex'));
+		if(heightBuffer === null) {
+			return null;
+		}
+		return heightBuffer.readUInt32LE();
+	}
+	
 	public async setBlockTransactionHashes(hash: Buffer, txHashes: Buffer[]) {
 		await this.set('blockTransactionHashes', hash.toString('hex'), Buffer.concat(txHashes));
 	}
@@ -94,7 +116,7 @@ export class Client {
 	 * High-level operations.
 	 */
 	
-	public async acceptBlock(height: number, blockBuffer: Buffer, setNextBlockHeight = true) {
+	public async addBlock(height: number, blockBuffer: Buffer, setNextBlockHeight = true) {
 		const block = Block.fromBuffer(blockBuffer);
 		const blockHash = block.getHash();
 		if(block.transactions === undefined) {
@@ -108,6 +130,10 @@ export class Client {
 		await this.setBlockTransactionHashes(blockHash, block.transactions.map(tx => tx.getHash()));
 		// Register block header.
 		await this.setBlockHeader(blockHash, block.toBuffer(true));
+		// Set block height by hash.
+		await this.setBlockHeightByHash(height, blockHash);
+		// Set block hash by height.
+		await this.setBlockHashByHeight(height, blockHash);
 		// Set next block height.
 		if(setNextBlockHeight) {
 			await this.setNextBlockHeight(height + 1);

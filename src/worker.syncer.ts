@@ -14,8 +14,8 @@ export const main = async () => {
 	parentPort!.on('message', async (data) => {
 		if(data.type === 'block') {
 			const { height, block } = data.payload;
-			await client.acceptBlock(height, Buffer.from(block), false);
-			parentPort!.postMessage({ type: 'acceptBlock', payload: { height } });
+			await client.addBlock(height, Buffer.from(block), false);
+			parentPort!.postMessage({ type: 'addBlock', payload: { height } });
 		}
 	});
 };

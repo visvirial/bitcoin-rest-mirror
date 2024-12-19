@@ -61,7 +61,7 @@ export class Syncer {
 			this._workers[i].on('message', async (data) => {
 				this._jobCount--;
 				const release = await mutex.acquire();
-				if(data.type === 'acceptBlock') {
+				if(data.type === 'addBlock') {
 					const { height } = data.payload;
 					this._acceptedBlockHeights.add(height);
 					for(;;) {

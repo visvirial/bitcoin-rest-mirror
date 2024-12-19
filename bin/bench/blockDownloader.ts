@@ -19,7 +19,7 @@ export const main = async () => {
 	const downloader = new BlockDownloader(chainConfig.restUrl);
 	downloader.run(0);
 	for(;;) {
-		console.log(`Running: ${downloader.runningCount}, Completed: ${downloader.completedCount}, Failed: ${downloader.failedCount}`);
+		console.log(`Running: ${downloader.runningCount}, Completed: ${downloader.completedCount}`);
 		await setTimeout(1000);
 	}
 };
