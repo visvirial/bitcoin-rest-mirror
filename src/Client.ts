@@ -27,16 +27,11 @@ export class Client {
 	}
 	
 	public async set(prefix: RedisPrefix, key: string, value: Buffer) {
-		await this._client.set(`${this.prefix}:${this.chain}:${prefix}:${key}`, value.toString('binary'));
+		await this._client.set(`${this.prefix}:${this.chain}:${prefix}:${key}`, value);
 	}
 	
 	public async get(prefix: RedisPrefix, key: string): Promise<Buffer | null> {
-		const result = await this._client.get(`${this.prefix}:${this.chain}:${prefix}:${key}`);
-		//console.log('get', prefix, key, result);
-		if(result === null) {
-			return null;
-		}
-		return Buffer.from(result, 'binary');
+		return await this._client.getBuffer(`${this.prefix}:${this.chain}:${prefix}:${key}`);
 	}
 	
 	/**
