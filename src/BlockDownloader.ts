@@ -22,7 +22,7 @@ export class BlockDownloader {
 	) {
 	}
 	
-	public async shiftBlock() {
+	public async shiftBlock(): Promise<{ height: number, block: Buffer | null }> {
 		const height = this._recentHeight;
 		const blockData = await (async () => {
 			for(;;) {
@@ -87,7 +87,7 @@ export class BlockDownloader {
 				`${restUrl}/block/${blockHash}.bin`
 			)).arrayBuffer());
 			if(blockBuffer.length <= 80) {
-				console.log('Block length invalid:', blockBuffer.toString('utf-8'));
+				console.log(`Block length invalid for height ${height}:`, blockBuffer.toString('utf-8'));
 				await setTimeout(1000);
 				continue;
 			}

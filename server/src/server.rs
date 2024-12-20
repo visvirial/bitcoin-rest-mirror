@@ -133,7 +133,9 @@ async fn handle_blockhashbyheight(state: State<AppState>, path: Path<String>) ->
         Some(block_hash) => block_hash,
         None => return (StatusCode::NOT_FOUND, "Block not found".to_string()).into_response(),
     };
-    block_hash.reverse();
+    if ext == "hex" {
+        block_hash.reverse();
+    }
     make_response(block_hash.to_vec(), ext.as_str())
 }
 
