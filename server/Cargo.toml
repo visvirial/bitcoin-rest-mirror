@@ -13,3 +13,6 @@ r2d2 = "0.8"
 redis = { version = "0.27", features = ["tokio-comp", "r2d2"] }
 bitcoin = "0.32"
 
+[dev-dependencies]
+redis-test = "0.6"
+

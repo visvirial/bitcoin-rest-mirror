@@ -188,6 +188,7 @@ dependencies = [
  "hex",
  "r2d2",
  "redis",
+ "redis-test",
  "tokio",
  "yaml-rust2",
 ]
@@ -815,6 +816,15 @@ dependencies = [
  "tokio",
  "tokio-util",
  "url",
+]
+
+[[package]]
+name = "redis-test"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45c7f734af2b89bb22c6e7ee45507adc698e127a90ae2f5c4054eeda54202912"
+dependencies = [
+ "redis",
 ]
 
 [[package]]
