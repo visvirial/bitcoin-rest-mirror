@@ -3,7 +3,11 @@ use std::sync::{
     Arc,
 };
 use redis::Commands;
-use bitcoin::consensus::Encodable;
+use bitcoin::block::Block;
+use bitcoin::consensus::{
+    Encodable,
+    Decodable,
+};
 
 pub trait KVS: Send + Sync {
     fn get(&self, key: &str) -> Option<Vec<u8>>;
@@ -72,13 +76,13 @@ impl Client {
         u32::from_le_bytes(*height_vec)
     }
     pub fn set_next_block_height(&self, height: u32) {
-        self.kvs.set(format!("{}:{}:nextBlockHeight", self.prefix, self.chain).as_str(), &Client::height_to_slice(height));
+        self.kvs.set(format!("{}:{}:nextBlockHeight", self.prefix, self.chain).as_str(), &Self::height_to_slice(height));
     }
     pub fn get_next_block_height(&self) -> u32 {
         let height_vec: Option<Vec<u8>> = self.kvs.get(format!("{}:{}:nextBlockHeight", self.prefix, self.chain).as_str());
         match height_vec {
             Some(height_vec) => {
-                Client::slice_to_height(&height_vec.try_into().unwrap())
+                Self::slice_to_height(&height_vec.try_into().unwrap())
             },
             None => 0,
         }
@@ -107,11 +111,22 @@ impl Client {
             None => None
         }
     }
-    pub fn set_transaction(&self, tx_hash: &[u8; 32], tx: &[u8]) {
-        self.set("transaction", hex::encode(tx_hash).as_str(), tx);
+    pub fn set_block_height_by_hash(&self, block_hash: &[u8; 32], height: u32) {
+        self.set("blockHeightByHash", hex::encode(block_hash).as_str(), &Self::height_to_slice(height));
     }
-    pub fn get_transaction(&self, tx_hash: &[u8; 32]) -> Option<Vec<u8>> {
-        self.get("transaction", hex::encode(tx_hash).as_str())
+    pub fn get_block_height_by_hash(&self, block_hash: &[u8; 32]) -> Option<u32> {
+        let height_vec = self.get("blockHeightByHash", hex::encode(block_hash).as_str());
+        match height_vec {
+            Some(height_vec) => {
+                Some(Self::slice_to_height(&height_vec.try_into().unwrap()))
+            },
+            None => None
+        }
+    }
+    pub fn set_block_transaction_hashes(&self, block_hash: &[u8; 32], tx_hashes: &Vec<[u8; 32]>) {
+        let mut tx_hashes_vec: Vec<u8> = Vec::new();
+        tx_hashes.iter().for_each(|e| tx_hashes_vec.extend(e));
+        self.set("blockTransactionHashes", hex::encode(block_hash).as_str(), &tx_hashes_vec);
     }
     pub fn get_block_transaction_hashes(&self, block_hash: &[u8; 32]) -> Option<Vec<[u8; 32]>> {
         let tx_hashes = self.get("blockTransactionHashes", hex::encode(block_hash).as_str());
@@ -126,6 +141,41 @@ impl Client {
                 Some(tx_hashes_array)
             },
             None => None
+        }
+    }
+    pub fn set_transaction(&self, tx_hash: &[u8; 32], tx: &[u8]) {
+        self.set("transaction", hex::encode(tx_hash).as_str(), tx);
+    }
+    pub fn get_transaction(&self, tx_hash: &[u8; 32]) -> Option<Vec<u8>> {
+        self.get("transaction", hex::encode(tx_hash).as_str())
+    }
+    pub fn add_block(&self, height: u32, block_vec: Vec<u8>, set_next_block_height: Option<bool>) {
+        let block = Block::consensus_decode(&mut block_vec.as_slice()).unwrap();
+        let block_hash: [u8; 32] = *block.block_hash().as_ref();
+        // Register transactions and hashes.
+        let mut tx_hashes = Vec::new();
+        for tx in block.txdata {
+            let mut tx_hash: [u8; 32] = *tx.compute_txid().as_ref();
+            tx_hash.reverse();
+            tx_hashes.push(tx_hash);
+            let mut tx_vec = Vec::new();
+            tx.consensus_encode(&mut tx_vec).unwrap();
+            self.set_transaction(&tx_hash, &tx_vec);
+        }
+        // Register block transaction hashes.
+        self.set_block_transaction_hashes(&block_hash, &tx_hashes);
+        // Register block header.
+        let mut block_header = [0u8; 80];
+        block.header.consensus_encode(&mut block_header.as_mut()).unwrap();
+        self.set_block_header(&block_hash, &block_header);
+        // Set block height by hash.
+        self.set_block_height_by_hash(&block_hash, height);
+        // Set block hash by height.
+        self.set_block_hash_by_height(height, &block_hash);
+        // Set next block height.
+        let set_next_block_height = set_next_block_height.unwrap_or(true);
+        if set_next_block_height {
+            self.set_next_block_height(height + 1);
         }
     }
     pub fn get_block(&self, block_hash: &[u8; 32]) -> Option<Vec<u8>> {
@@ -154,7 +204,7 @@ impl Client {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     
     use std::fs::File;
@@ -187,13 +237,13 @@ mod tests {
         }
     }
     
-    fn create_client() -> Client {
+    pub fn create_client() -> Client {
         let mock_kvs = MockKVS::new();
         let client = Client::new(mock_kvs, "BTC".to_string(), None);
         client
     }
     
-    fn load_blocks() -> Vec<Vec<u8>> {
+    pub fn load_blocks() -> Vec<Vec<u8>> {
         let mut blocks: Vec<Vec<u8>> = Vec::new();
         for height in 0..1000 {
             let mut f = File::open(format!("../test/fixtures/block_{}.bin", height)).expect(format!("block_{}.bin file not found", height).as_str());
@@ -233,12 +283,11 @@ mod tests {
             let client = create_client();
             let blocks = load_blocks();
             let block = Block::consensus_decode(&mut blocks[0].as_slice()).unwrap();
-            let block_hash = block.block_hash();
-            let block_hash_slice: [u8; 32] = *block_hash.as_ref();
-            let block_header = [0u8; 80];
-            assert_eq!(block.header.consensus_encode(&mut block_header.to_vec()).unwrap(), 80);
-            client.set_block_header(&block_hash_slice, &block_header);
-            assert_eq!(client.get_block_header(&block_hash_slice), Some(block_header));
+            let block_hash: [u8; 32] = *block.block_hash().as_ref();
+            let mut block_header = [0u8; 80];
+            assert_eq!(block.header.consensus_encode(&mut block_header.as_mut()).unwrap(), 80);
+            client.set_block_header(&block_hash, &block_header);
+            assert_eq!(client.get_block_header(&block_hash), Some(block_header));
         }
     }
     
@@ -254,10 +303,9 @@ mod tests {
             let client = create_client();
             let blocks = load_blocks();
             let block = Block::consensus_decode(&mut blocks[0].as_slice()).unwrap();
-            let block_hash = block.block_hash();
-            let block_hash_slice: [u8; 32] = *block_hash.as_ref();
-            client.set_block_hash_by_height(0, &block_hash_slice);
-            assert_eq!(client.get_block_hash_by_height(0), Some(block_hash_slice));
+            let block_hash: [u8; 32] = *block.block_hash().as_ref();
+            client.set_block_hash_by_height(0, &block_hash);
+            assert_eq!(client.get_block_hash_by_height(0), Some(block_hash));
         }
     }
     
