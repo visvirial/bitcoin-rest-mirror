@@ -66,7 +66,7 @@ fn make_response(data: Vec<u8>, ext: &str) -> Response {
     }
 }
 
-async fn handle_tx(State(mut state): State<AppState>, Path(path): Path<String>) -> impl IntoResponse {
+async fn handle_tx(State(state): State<AppState>, Path(path): Path<String>) -> impl IntoResponse {
     let (hash, ext) = match parse_id_and_ext(&path) {
         Ok((hash, ext)) => (hash, ext),
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
@@ -78,7 +78,7 @@ async fn handle_tx(State(mut state): State<AppState>, Path(path): Path<String>) 
     make_response(tx, ext.as_str())
 }
 
-async fn handle_block(State(mut state): State<AppState>, Path(path): Path<String>) -> impl IntoResponse {
+async fn handle_block(State(state): State<AppState>, Path(path): Path<String>) -> impl IntoResponse {
     let (hash, ext) = match parse_id_and_ext(&path) {
         Ok((hash, ext)) => (hash, ext),
         Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
@@ -124,8 +124,8 @@ async fn main() {
     // Initialize Redis connection.
     let redis_url = config["redisUrl"].as_str().unwrap();
     // Initialize client.
-    let redis_client = RedisClientPool::new(redis_url, chain.clone(), None);
-    let client = Client::new(redis_client);
+    let redis_client = RedisClientPool::new(redis_url);
+    let client = Client::new(redis_client, chain.clone(), None);
     // Initialize server.
     let port = config["chains"][chain.as_str()]["server"]["port"].as_i64().unwrap_or(8000);
     let host = config["chains"][chain.as_str()]["server"]["host"].as_str().unwrap_or("localhost");

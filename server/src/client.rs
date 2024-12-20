@@ -6,81 +6,114 @@ use redis::Commands;
 use bitcoin::consensus::Encodable;
 
 pub trait KVS: Send + Sync {
-    fn get_key(&self, prefix: &str, chain: &str, key_prefix: &str, key: &str) -> String {
-        format!("{}:{}:{}:{}", prefix, chain, key_prefix, key)
-    }
-    fn get(&self, prefix: &str, key: &str) -> Option<Vec<u8>>;
-    fn set(&self, prefix: &str, key: &str, value: &[u8]);
+    fn get(&self, key: &str) -> Option<Vec<u8>>;
+    fn set(&self, key: &str, value: &[u8]);
 }
 
 #[derive(Clone)]
 pub struct RedisClientPool {
-    prefix: String,
-    chain: String,
     pool: Arc<r2d2::Pool<redis::Client>>,
 }
 
 impl RedisClientPool {
-    pub fn new(redis_url: &str, chain: String, prefix: Option<String>) -> Self {
+    pub fn new(redis_url: &str) -> Self {
         let client = redis::Client::open(redis_url).unwrap();
         let pool_size = std::thread::available_parallelism().unwrap().get();
         println!("Redis connection pool size: {}", pool_size);
         let pool = Arc::new(r2d2::Pool::builder().max_size(pool_size as u32).build(client).unwrap());
         Self {
-            prefix: prefix.unwrap_or("bitcoin-rest-mirror".to_string()),
-            chain,
             pool,
         }
     }
 }
 
 impl KVS for RedisClientPool {
-    fn get(&self, key_prefix: &str, key: &str) -> Option<Vec<u8>> {
-        let key = self.get_key(&self.prefix, &self.chain, key_prefix, key);
+    fn get(&self, key: &str) -> Option<Vec<u8>> {
         let value: Option<Vec<u8>> = self.pool.get().unwrap().get(&key).unwrap();
         value
     }
-    fn set(&self, key_prefix: &str, key: &str, value: &[u8]) {
-        let key = self.get_key(&self.prefix, &self.chain, key_prefix, key);
+    fn set(&self, key: &str, value: &[u8]) {
         let _: () = self.pool.get().unwrap().set(key, value).unwrap();
     }
 }
 
 #[derive(Clone)]
 pub struct Client {
+    prefix: String,
+    chain: String,
     kvs: Arc<dyn KVS>,
 }
 
 impl Client {
-    pub fn new(kvs: impl KVS + 'static) -> Self {
+    pub fn new(kvs: impl KVS + 'static, chain: String, prefix: Option<String>) -> Self {
         Self {
+            prefix: prefix.unwrap_or("bitcoin-rest-mirror".to_string()),
+            chain,
             kvs: Arc::new(kvs),
         }
     }
-    pub fn get(&mut self, key_prefix: &str, key: &str) -> Option<Vec<u8>> {
-        self.kvs.get(key_prefix, key)
+    fn get_key(&self, key_prefix: &str, key: &str) -> String {
+        format!("{}:{}:{}:{}", self.prefix, self.chain, key_prefix, key)
     }
-    pub fn set(&mut self, prefix: &str, key: &str, value: &[u8]) {
-        self.kvs.set(prefix, key, value);
+    fn get(&self, key_prefix: &str, key: &str) -> Option<Vec<u8>> {
+        let key = self.get_key(key_prefix, key);
+        self.kvs.get(&key)
     }
-    pub fn get_transaction(&mut self, tx_hash: &[u8; 32]) -> Option<Vec<u8>> {
-        self.get("transaction", hex::encode(tx_hash).as_str())
+    fn set(&self, key_prefix: &str, key: &str, value: &[u8]) {
+        let key = self.get_key(key_prefix, key);
+        self.kvs.set(&key, &value);
     }
-    pub fn set_transaction(&mut self, tx_hash: &[u8; 32], tx: &[u8]) {
-        self.set("transaction", hex::encode(tx_hash).as_str(), tx);
+    fn height_to_slice(height: u32) -> [u8; 4] {
+        let mut height_vec = [0u8; 4];
+        height_vec.copy_from_slice(&height.to_le_bytes());
+        height_vec
     }
-    pub fn get_block_header(&mut self, block_hash: &[u8; 32]) -> Option<[u8; 80]> {
+    fn slice_to_height(height_vec: &[u8; 4]) -> u32 {
+        u32::from_le_bytes(*height_vec)
+    }
+    pub fn set_next_block_height(&self, height: u32) {
+        self.kvs.set(format!("{}:{}:nextBlockHeight", self.prefix, self.chain).as_str(), &Client::height_to_slice(height));
+    }
+    pub fn get_next_block_height(&self) -> u32 {
+        let height_vec: Option<Vec<u8>> = self.kvs.get(format!("{}:{}:nextBlockHeight", self.prefix, self.chain).as_str());
+        match height_vec {
+            Some(height_vec) => {
+                Client::slice_to_height(&height_vec.try_into().unwrap())
+            },
+            None => 0,
+        }
+    }
+    pub fn set_block_header(&self, block_hash: &[u8; 32], block_header: &[u8; 80]) {
+        self.set("blockHeader", hex::encode(block_hash).as_str(), block_header);
+    }
+    pub fn get_block_header(&self, block_hash: &[u8; 32]) -> Option<[u8; 80]> {
         let block_header = self.get("blockHeader", hex::encode(block_hash).as_str());
         match block_header {
             Some(block_header) => {
-                let mut block_header_array = [0u8; 80];
-                block_header_array.copy_from_slice(&block_header);
-                Some(block_header_array)
+                Some(block_header.try_into().unwrap())
             },
             None => None
         }
     }
-    pub fn get_block_transaction_hashes(&mut self, block_hash: &[u8; 32]) -> Option<Vec<[u8; 32]>> {
+    pub fn set_block_hash_by_height(&self, height: u32, block_hash: &[u8; 32]) {
+        self.set("blockHashByHeight", height.to_string().as_str(), block_hash);
+    }
+    pub fn get_block_hash_by_height(&self, height: u32) -> Option<[u8; 32]> {
+        let block_hash = self.get("blockHashByHeight", height.to_string().as_str());
+        match block_hash {
+            Some(block_hash) => {
+                Some(block_hash.try_into().unwrap())
+            },
+            None => None
+        }
+    }
+    pub fn set_transaction(&self, tx_hash: &[u8; 32], tx: &[u8]) {
+        self.set("transaction", hex::encode(tx_hash).as_str(), tx);
+    }
+    pub fn get_transaction(&self, tx_hash: &[u8; 32]) -> Option<Vec<u8>> {
+        self.get("transaction", hex::encode(tx_hash).as_str())
+    }
+    pub fn get_block_transaction_hashes(&self, block_hash: &[u8; 32]) -> Option<Vec<[u8; 32]>> {
         let tx_hashes = self.get("blockTransactionHashes", hex::encode(block_hash).as_str());
         match tx_hashes {
             Some(tx_hashes) => {
@@ -95,7 +128,7 @@ impl Client {
             None => None
         }
     }
-    pub fn get_block(&mut self, block_hash: &[u8; 32]) -> Option<Vec<u8>> {
+    pub fn get_block(&self, block_hash: &[u8; 32]) -> Option<Vec<u8>> {
         let block_header = match self.get_block_header(block_hash) {
             Some(block_header) => block_header,
             None => return None
@@ -120,51 +153,113 @@ impl Client {
     }
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
-    use redis_test::MockRedisConnection;
     
-    struct RedisMockConnectionManager {
-        connection: MockRedisConnection,
+    use std::fs::File;
+    use std::io::Read;
+    use std::sync::Mutex;
+    use std::collections::HashMap;
+    use bitcoin::block::Block;
+    use bitcoin::consensus::Decodable;
+    
+    #[derive(Clone)]
+    struct MockKVS {
+        db: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     }
     
-    impl r2d2::ManageConnection for RedisMockConnectionManager {
-        type Connection = MockRedisConnection;
-        type Error = redis::RedisError;
-        
-        fn connect(&self) -> Result<Self::Connection, Self::Error> {
-            Ok(self.connection.clone())
+    impl MockKVS {
+        pub fn new() -> Self {
+            Self {
+                db: Arc::new(Mutex::new(HashMap::new())),
+            }
         }
-        
-        fn is_valid(&self, _conn: &mut Self::Connection) -> Result<(), Self::Error> {
-            Ok(())
+    }
+    
+    impl KVS for MockKVS {
+        fn get(&self, key: &str) -> Option<Vec<u8>> {
+            let value: Option<Vec<u8>> = self.db.lock().unwrap().get(key).cloned();
+            value
         }
-        
-        fn has_broken(&self, _conn: &mut Self::Connection) -> bool {
-            false
+        fn set(&self, key: &str, value: &[u8]) {
+            self.db.lock().unwrap().insert(key.to_string(), value.to_vec());
         }
     }
     
     fn create_client() -> Client {
-        let pool_size = 1;
-        let redis_mock_connection_manager = RedisMockConnectionManager {
-            connection: MockRedisConnection::new(vec![]),
-        };
-        let pool = Arc::new(r2d2::Pool::builder().max_size(pool_size as u32).build(redis_mock_connection_manager).unwrap());
-        let redis_client_pool = RedisClientPool {
-            prefix: "bitcoin-rest-mirror".to_string(),
-            chain: "BTC".to_string(),
-            pool,
-        };
-        let client = Client::new(redis_client_pool);
+        let mock_kvs = MockKVS::new();
+        let client = Client::new(mock_kvs, "BTC".to_string(), None);
         client
     }
     
-    #[test]
-    fn test_get_set() {
+    fn load_blocks() -> Vec<Vec<u8>> {
+        let mut blocks: Vec<Vec<u8>> = Vec::new();
+        for height in 0..1000 {
+            let mut f = File::open(format!("../test/fixtures/block_{}.bin", height)).expect(format!("block_{}.bin file not found", height).as_str());
+            let mut block = Vec::new();
+            f.read_to_end(&mut block).expect("Something went wrong reading the file");
+            blocks.push(block);
+        }
+        blocks
     }
+    
+    mod next_block_height {
+        use super::*;
+        #[test]
+        fn get_first() {
+            let client = create_client();
+            assert_eq!(client.get_next_block_height(), 0);
+        }
+        #[test]
+        fn set() {
+            let client = create_client();
+            let height: u32 = 1234;
+            client.set_next_block_height(height);
+            assert_eq!(client.get_next_block_height(), height);
+        }
+    }
+    
+    mod block_header {
+        use super::*;
+        #[test]
+        fn get_none() {
+            let client = create_client();
+            let block_hash = [0u8; 32];
+            assert_eq!(client.get_block_header(&block_hash), None);
+        }
+        #[test]
+        fn set() {
+            let client = create_client();
+            let blocks = load_blocks();
+            let block = Block::consensus_decode(&mut blocks[0].as_slice()).unwrap();
+            let block_hash = block.block_hash();
+            let block_hash_slice: [u8; 32] = *block_hash.as_ref();
+            let block_header = [0u8; 80];
+            assert_eq!(block.header.consensus_encode(&mut block_header.to_vec()).unwrap(), 80);
+            client.set_block_header(&block_hash_slice, &block_header);
+            assert_eq!(client.get_block_header(&block_hash_slice), Some(block_header));
+        }
+    }
+    
+    mod block_hash_by_height {
+        use super::*;
+        #[test]
+        fn get_none() {
+            let client = create_client();
+            assert_eq!(client.get_block_hash_by_height(0), None);
+        }
+        #[test]
+        fn set() {
+            let client = create_client();
+            let blocks = load_blocks();
+            let block = Block::consensus_decode(&mut blocks[0].as_slice()).unwrap();
+            let block_hash = block.block_hash();
+            let block_hash_slice: [u8; 32] = *block_hash.as_ref();
+            client.set_block_hash_by_height(0, &block_hash_slice);
+            assert_eq!(client.get_block_hash_by_height(0), Some(block_hash_slice));
+        }
+    }
+    
 }
-*/
 

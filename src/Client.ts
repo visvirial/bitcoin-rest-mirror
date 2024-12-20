@@ -39,15 +39,17 @@ export class Client {
 	 */
 	
 	public async setNextBlockHeight(height: number) {
-		await this._client.set(`${this.prefix}:${this.chain}:nextBlockHeight`, height.toString());
+		let heightBuffer = Buffer.alloc(4);
+		heightBuffer.writeUInt32LE(height);
+		await this._client.set(`${this.prefix}:${this.chain}:nextBlockHeight`, heightBuffer);
 	}
 	
 	public async getNextBlockHeight(): Promise<number> {
-		const result = await this._client.get(`${this.prefix}:${this.chain}:nextBlockHeight`);
-		if(!result) {
+		const heightBuffer = await this._client.getBuffer(`${this.prefix}:${this.chain}:nextBlockHeight`);
+		if(!heightBuffer) {
 			return 0;
 		}
-		return +result;
+		return heightBuffer.readUInt32LE();
 	}
 	
 	public async setBlockHeader(hash: Buffer, header: Buffer) {
