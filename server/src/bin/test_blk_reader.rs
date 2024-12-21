@@ -26,23 +26,18 @@ async fn main() {
     let concurrency = 4;
     blk_reader.run_threads(concurrency).await;
     let mut last_print = std::time::Instant::now();
-    loop {
-        if blk_reader.is_all_read() {
-            break;
-        }
-        while let Some((height, block)) = blk_reader.get_next_block() {
-            if last_print.elapsed().as_secs() >= 1 {
-                let block_header = Header::consensus_decode(&mut block.as_ref()).unwrap();
-                let mut block_hash: [u8; 32] = *block_header.block_hash().as_ref();
-                block_hash.reverse();
-                println!(
-                    "Block height: #{}, Hash: {}, Block size: {}",
-                    height.to_formatted_string(&Locale::en),
-                    hex::encode(block_hash),
-                    block.len().to_formatted_string(&Locale::en),
-                );
-                last_print = std::time::Instant::now();
-            }
+    while let Some((height, block)) = blk_reader.get_next_block().await {
+        if last_print.elapsed().as_secs() >= 1 {
+            let block_header = Header::consensus_decode(&mut block.as_ref()).unwrap();
+            let mut block_hash: [u8; 32] = *block_header.block_hash().as_ref();
+            block_hash.reverse();
+            println!(
+                "Block height: #{}, Hash: {}, Block size: {}",
+                height.to_formatted_string(&Locale::en),
+                hex::encode(block_hash),
+                block.len().to_formatted_string(&Locale::en),
+            );
+            last_print = std::time::Instant::now();
         }
     }
     println!("All blocks read.");

@@ -186,7 +186,8 @@ impl BlkReader {
                         sleep(Duration::from_millis(100)).await;
                         continue;
                     }
-                    if this.read_and_process_next_file().is_err() {
+                    let result = this.read_and_process_next_file();
+                    if result.is_err() {
                         break;
                     }
                 }
@@ -202,7 +203,7 @@ impl BlkReader {
             });
         }
     }
-    pub fn get_next_block(&mut self) -> Option<(u32, Bytes)> {
+    pub fn try_get_next_block(&mut self) -> Option<(u32, Bytes)> {
         let mut data = self.data.write().unwrap();
         if let Some(block) = data.blocks_by_height.pop_front() {
             let height = data.next_height;
@@ -210,6 +211,18 @@ impl BlkReader {
             return Some((height, block));
         }
         None
+    }
+    pub async fn get_next_block(&mut self) -> Option<(u32, Bytes)> {
+        loop {
+            let data = self.try_get_next_block();
+            if data.is_some() {
+                return data;
+            }
+            if self.is_all_read() {
+                return None;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
     }
 }
 
