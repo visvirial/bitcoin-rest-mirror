@@ -11,7 +11,7 @@ pub mod client;
 pub mod server;
 
 pub fn load_config() -> Yaml {
-    let mut f = File::open("../config.yaml").expect("config.yaml file not found");
+    let mut f = File::open("./config.yaml").expect("config.yaml file not found");
     let mut contents = String::new();
     f.read_to_string(&mut contents).expect("Something went wrong reading the file");
     let config = YamlLoader::load_from_str(&contents).unwrap();

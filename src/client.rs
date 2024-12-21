@@ -246,7 +246,7 @@ pub mod tests {
     pub fn load_blocks() -> Vec<Vec<u8>> {
         let mut blocks: Vec<Vec<u8>> = Vec::new();
         for height in 0..1000 {
-            let mut f = File::open(format!("../test/fixtures/block_{}.bin", height)).expect(format!("block_{}.bin file not found", height).as_str());
+            let mut f = File::open(format!("./fixture/blocks/block_{}.bin", height)).expect(format!("block_{}.bin file not found", height).as_str());
             let mut block = Vec::new();
             f.read_to_end(&mut block).expect("Something went wrong reading the file");
             blocks.push(block);
