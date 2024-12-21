@@ -5,8 +5,10 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bytes = "1.9"
 hex = "0.4"
 num-format = "0.4"
+futures = "0.3"
 tokio = { version = "1", features = ["full"] }
 yaml-rust2 = "0.9"
 serde = { version = "1.0", features = ["derive"] }
@@ -32,4 +34,8 @@ path = "src/bin/server.rs"
 [[bin]]
 name = "syncer"
 path = "src/bin/syncer.rs"
+
+[[bin]]
+name = "blk_reader"
+path = "src/bin/blk_reader.rs"
 
