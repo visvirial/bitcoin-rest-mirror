@@ -36,6 +36,6 @@ name = "syncer"
 path = "src/bin/syncer.rs"
 
 [[bin]]
-name = "blk_reader"
-path = "src/bin/blk_reader.rs"
+name = "test_blk_reader"
+path = "src/bin/test_blk_reader.rs"
 

@@ -6,6 +6,7 @@ use yaml_rust2::{
     YamlLoader
 };
 
+pub mod blk_reader;
 pub mod client;
 pub mod server;
 
