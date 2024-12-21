@@ -5,7 +5,6 @@ use std::time::{
 };
 use std::thread::{
     available_parallelism,
-    sleep,
 };
 use std::sync::{
     Arc,
@@ -13,6 +12,7 @@ use std::sync::{
 };
 use std::collections::HashMap;
 use bytes::Bytes;
+use tokio::time::sleep;
 use rayon::prelude::*;
 use reqwest::{
     Response,
@@ -51,7 +51,7 @@ impl BitcoinRest {
                 },
                 Err(_) => {
                     println!("Fetch timeouted for: {}.", url);
-                    sleep(Duration::from_millis(1000));
+                    sleep(Duration::from_millis(1000)).await;
                 },
             };
         }
@@ -189,7 +189,7 @@ impl BlockDownloader {
         }
         None
     }
-    pub fn shift(&mut self) -> Option<(u32, Bytes)> {
+    pub async fn shift(&mut self) -> Option<(u32, Bytes)> {
         {
             let data = &self.data.read().unwrap();
             if data.current_height > data.max_height {
@@ -200,7 +200,7 @@ impl BlockDownloader {
             if let Some(block) = self.try_shift() {
                 return Some(block);
             }
-            sleep(Duration::from_millis(100));
+            sleep(Duration::from_millis(100)).await;
         }
     }
     pub async fn run(&mut self, start_height: u32) -> Result<(), Response> {
@@ -234,7 +234,7 @@ impl BlockDownloader {
                             downloader.data.read().unwrap().blocks.len() >= downloader.max_blocks as usize
                         };
                         if max_blocks_reached {
-                            sleep(Duration::from_millis(100));
+                            sleep(Duration::from_millis(100)).await;
                         } else {
                             break;
                         }
