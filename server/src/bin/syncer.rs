@@ -48,10 +48,10 @@ async fn main() {
     let reporter_thread = {
         let downloader = downloader.clone();
         let reporter_thread = tokio::spawn(async move {
-            let mut last_block_height: u32 = next_block_height - 1;
+            let mut last_block_height: i32 = next_block_height as i32 - 1;
             loop {
                 tokio::time::sleep(Duration::from_millis(1000)).await;
-                let current_height = downloader.get_current_height();
+                let current_height = downloader.get_current_height() as i32;
                 let processed_blocks = current_height - last_block_height;
                 println!(
                     "Processing: #{}, Blocks per second: {}, Blocks waiting: {}.",
