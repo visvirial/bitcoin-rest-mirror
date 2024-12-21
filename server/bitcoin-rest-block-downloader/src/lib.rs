@@ -173,6 +173,9 @@ impl BlockDownloader {
         self.max_blocks = max_blocks;
         self
     }
+    pub fn get_current_height(&self) -> u32 {
+        self.data.read().unwrap().current_height
+    }
     pub fn try_shift(&mut self) -> Option<(u32, Bytes)> {
         let data = &mut self.data.write().unwrap();
         let current_height = data.current_height;
