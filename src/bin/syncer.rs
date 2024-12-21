@@ -25,7 +25,7 @@ use bitcoin_rest_mirror::{
     },
 };
 
-use bitcoin_rest_block_downloader::BlockDownloader;
+use bitcoin_rest_mirror::block_downloader::BlockDownloader;
 
 async fn sync_single(downloader: &mut BlockDownloader, client: &Client) -> u32 {
     let next_block_height = client.get_next_block_height();

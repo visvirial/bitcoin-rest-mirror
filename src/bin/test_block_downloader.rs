@@ -5,7 +5,7 @@ use num_format::{
     ToFormattedString,
 };
 
-use bitcoin_rest_block_downloader::BlockDownloader;
+use bitcoin_rest_mirror::block_downloader::BlockDownloader;
 
 #[tokio::main]
 async fn main() {
@@ -28,7 +28,7 @@ async fn main() {
     let mut lap_time = SystemTime::now();
     let mut fetched_blocks: usize = 0;
     loop {
-        let block = downloader.shift();
+        let block = downloader.shift().await;
         if block.is_none() {
             println!("No more blocks to fetch.");
             break;

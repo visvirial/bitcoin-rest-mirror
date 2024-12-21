@@ -7,6 +7,7 @@ use yaml_rust2::{
 };
 
 pub mod blk_reader;
+pub mod block_downloader;
 pub mod client;
 pub mod server;
 
