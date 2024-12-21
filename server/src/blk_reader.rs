@@ -164,7 +164,6 @@ impl BlkReader {
             let child_hash = child_hash.unwrap();
             let child_block = data.blocks_by_hash.remove(&child_hash).unwrap();
             data.blocks_by_height.push_back(child_block);
-            data.next_height += 1;
             data.current_hash = child_hash;
         }
     }
