@@ -29,7 +29,7 @@ pub struct BitcoinRest {
 impl BitcoinRest {
     pub fn new(rest_endpoint: Option<String>) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(1))
+            .timeout(Duration::from_secs(10))
             .build()
             .unwrap()
             ;
