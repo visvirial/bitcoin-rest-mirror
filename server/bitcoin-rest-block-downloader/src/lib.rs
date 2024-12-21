@@ -204,6 +204,7 @@ impl BlockDownloader {
         }
     }
     pub async fn run(&mut self, start_height: u32) -> Result<(), Response> {
+        self.data.write().unwrap().current_height = start_height;
         let first_block_hash = self.bitcoin_rest.get_blockhashbyheight(start_height).await;
         if first_block_hash.is_err() {
             return Ok(());
@@ -219,7 +220,6 @@ impl BlockDownloader {
         let block_hashes = headers.par_iter().map(|header| Sha256d::hash(header).to_byte_array()).collect::<Vec<[u8; 32]>>();
         let block_hashes = Arc::new(RwLock::new(block_hashes));
         println!("Computed block hashes in {}ms.", start_time.elapsed().unwrap().as_millis());
-        self.data.write().unwrap().current_height = start_height;
         self.data.write().unwrap().max_height = start_height + blocks_len as u32 - 1;
         println!("Fetching blocks with {} threads...", self.concurrency);
         self.data.write().unwrap().next_height = start_height;

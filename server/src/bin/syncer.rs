@@ -1,5 +1,7 @@
 
-use std::time::SystemTime;
+use std::time::{
+    Duration,
+};
 use num_format::{
     Locale,
     ToFormattedString,
@@ -42,9 +44,27 @@ async fn main() {
     // Start downloader.
     downloader.run(next_block_height).await.unwrap();
     println!("Downloader started.");
-    // Process blocks.
-    let mut lap_time = SystemTime::now();
-    let mut fetched_blocks: usize = 0;
+    // Print stats.
+    let reporter_thread = {
+        let downloader = downloader.clone();
+        let reporter_thread = tokio::spawn(async move {
+            let mut last_block_height: u32 = next_block_height - 1;
+            loop {
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+                let current_height = downloader.get_current_height();
+                let processed_blocks = current_height - last_block_height;
+                println!(
+                    "Processing: #{}, Blocks per second: {}, Blocks waiting: {}.",
+                    current_height.to_formatted_string(&Locale::en),
+                    processed_blocks.to_formatted_string(&Locale::en),
+                    downloader.get_blocks_count().to_formatted_string(&Locale::en),
+                );
+                last_block_height = current_height;
+            }
+        });
+        reporter_thread
+    };
+    // Do initial sync.
     loop {
         let block = downloader.shift();
         if block.is_none() {
@@ -53,18 +73,8 @@ async fn main() {
         }
         let (height, block) = block.unwrap();
         client.add_block(height, block.into(), Some(true));
-        fetched_blocks += 1;
-        let elapsed = lap_time.elapsed().unwrap().as_millis();
-        if elapsed >= 1000 {
-            println!(
-                "Processing: #{}, Blocks per second: {}, Blocks waiting: {}.",
-                downloader.get_current_height().to_formatted_string(&Locale::en),
-                (fetched_blocks * 1000 / elapsed as usize).to_formatted_string(&Locale::en),
-                downloader.get_blocks_count().to_formatted_string(&Locale::en),
-            );
-            lap_time = SystemTime::now();
-            fetched_blocks = 0;
-        }
     }
+    // Stop reporter thread.
+    reporter_thread.abort();
 }
 
