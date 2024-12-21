@@ -1,6 +1,6 @@
 
 [package]
-name = "bitcoin-rest-mirror-server"
+name = "bitcoin-rest-mirror"
 version = "0.1.0"
 edition = "2021"
 
@@ -19,5 +19,15 @@ axum-test = "16.4"
 redis-test = "0.6"
 
 [workspace]
-members = ["bitcoin-rest-block-downloader"]
+members = [
+	"bitcoin-rest-block-downloader",
+]
+
+[[bin]]
+name = "server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "syncer"
+path = "src/bin/syncer.rs"
 

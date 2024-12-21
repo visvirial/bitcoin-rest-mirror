@@ -6,14 +6,12 @@ use yaml_rust2::{
     YamlLoader
 };
 
-pub mod client;
-use client::{
+use bitcoin_rest_mirror::client::{
     RedisClientPool,
     Client,
 };
 
-pub mod server;
-use server::start_server;
+use bitcoin_rest_mirror::server::start_server;
 
 pub fn load_config() -> Yaml {
     let mut f = File::open("../config.yaml").expect("config.yaml file not found");
