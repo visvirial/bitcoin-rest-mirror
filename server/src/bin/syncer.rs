@@ -2,6 +2,9 @@
 use std::time::{
     Duration,
 };
+use std::thread::{
+    sleep,
+};
 use num_format::{
     Locale,
     ToFormattedString,
@@ -16,6 +19,23 @@ use bitcoin_rest_mirror::{
 };
 
 use bitcoin_rest_block_downloader::BlockDownloader;
+
+async fn try_sync(downloader: &mut BlockDownloader, client: &Client) -> u32 {
+    let next_block_height = client.get_next_block_height();
+    downloader.run(next_block_height).await.unwrap();
+    let mut blocks_processed = 0;
+    loop {
+        let block = downloader.shift();
+        if block.is_none() {
+            //println!("Processed all blocks.");
+            break;
+        }
+        let (height, block) = block.unwrap();
+        client.add_block(height, block.into(), Some(true));
+        blocks_processed += 1;
+    }
+    blocks_processed
+}
 
 #[tokio::main]
 async fn main() {
@@ -65,16 +85,25 @@ async fn main() {
         reporter_thread
     };
     // Do initial sync.
-    loop {
-        let block = downloader.shift();
-        if block.is_none() {
-            println!("Processed all blocks.");
-            break;
-        }
-        let (height, block) = block.unwrap();
-        client.add_block(height, block.into(), Some(true));
-    }
+    println!("Starting initial sync...");
+    let blocks_processed = try_sync(&mut downloader, &client).await;
+    println!(
+        "Initial sync completed: synced {} blocks.",
+        blocks_processed.to_formatted_string(&Locale::en),
+    );
     // Stop reporter thread.
     reporter_thread.abort();
+    // Start sync loop.
+    loop {
+        sleep(Duration::from_millis(1000));
+        let blocks_processed = try_sync(&mut downloader, &client).await;
+        if blocks_processed == 0 {
+            continue;
+        }
+        println!(
+            "Synced {} blocks.",
+            blocks_processed.to_formatted_string(&Locale::en),
+        );
+    }
 }
 
