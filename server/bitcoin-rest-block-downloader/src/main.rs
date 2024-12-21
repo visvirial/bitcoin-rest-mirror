@@ -10,8 +10,8 @@ use bitcoin_rest_block_downloader::BlockDownloader;
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let rest_endpoint = if args.len() >= 3 {
-        Some(args[2].clone())
+    let rest_endpoint = if args.len() >= 2 {
+        Some(args[1].clone())
     } else {
         None
     };
