@@ -32,8 +32,13 @@ pub struct BitcoinRest {
 
 impl BitcoinRest {
     pub fn new(rest_endpoint: Option<String>) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(1))
+            .build()
+            .unwrap()
+            ;
         Self {
-            client: reqwest::Client::new(),
+            client,
             rest_endpoint: rest_endpoint.unwrap_or("http://localhost:8332/rest".to_string()),
         }
     }
@@ -42,8 +47,19 @@ impl BitcoinRest {
         if let Some(query) = query {
             url.push_str(&format!("?{}", query));
         }
-        let response = self.client.get(&url).send().await.unwrap();
-        response
+        let max_retries = 10;
+        for _ in 0..max_retries {
+            match self.client.get(&url).send().await {
+                Ok(response) => {
+                    return response;
+                },
+                Err(_) => {
+                    println!("Fetch timeouted for: {}.", url);
+                    sleep(Duration::from_millis(1000));
+                },
+            };
+        }
+        panic!("Failed to fetch {} after {} retries.", url, max_retries);
     }
     pub async fn fetch_hex(&self, path: &[&str], query: Option<&str>) -> Result<String, Response> {
         let response = self.fetch(path, "hex", query).await;
@@ -117,6 +133,7 @@ impl BitcoinRest {
 
 struct BlockDownloaderData {
     current_height: u32,
+    next_height: u32,
     max_height: u32,
     blocks: HashMap<u32, Bytes>,
 }
@@ -125,6 +142,7 @@ impl BlockDownloaderData {
     pub fn new() -> Self {
         Self {
             current_height: 0,
+            next_height: 0,
             max_height: 0,
             blocks: HashMap::new(),
         }
@@ -151,11 +169,13 @@ impl BlockDownloader {
             data: Arc::new(RwLock::new(data)),
         }
     }
-    pub fn set_concurrency(&mut self, concurrency: usize) {
+    pub fn set_concurrency(mut self, concurrency: usize) -> Self {
         self.concurrency = concurrency;
+        self
     }
-    pub fn set_max_blocks(&mut self, max_blocks: u32) {
+    pub fn set_max_blocks(mut self, max_blocks: u32) -> Self {
         self.max_blocks = max_blocks;
+        self
     }
     pub fn try_shift(&mut self) -> Option<(u32, Bytes)> {
         let data = &mut self.data.write().unwrap();
@@ -195,21 +215,46 @@ impl BlockDownloader {
         println!("Fetched {} block headers in {}ms.", blocks_len, start_time.elapsed().unwrap().as_millis());
         let start_time = SystemTime::now();
         let block_hashes = headers.par_iter().map(|header| Sha256d::hash(header).to_byte_array()).collect::<Vec<[u8; 32]>>();
+        let block_hashes = Arc::new(RwLock::new(block_hashes));
         println!("Computed block hashes in {}ms.", start_time.elapsed().unwrap().as_millis());
         self.data.write().unwrap().current_height = start_height;
         self.data.write().unwrap().max_height = start_height + blocks_len as u32 - 1;
-        println!("Fetching blocks...");
-        for height in start_height..(start_height + blocks_len as u32) {
-            loop {
-                if self.data.read().unwrap().blocks.len() >= self.max_blocks as usize {
-                    sleep(Duration::from_millis(100));
-                } else {
-                    break;
+        println!("Fetching blocks with {} threads...", self.concurrency);
+        self.data.write().unwrap().next_height = start_height;
+        for _ in 0..self.concurrency {
+            let downloader = self.clone();
+            let block_hashes = block_hashes.clone();
+            tokio::spawn(async move {
+                loop {
+                    // Sleep until blocks are consumed.
+                    loop {
+                        let max_blocks_reached = {
+                            downloader.data.read().unwrap().blocks.len() >= downloader.max_blocks as usize
+                        };
+                        if max_blocks_reached {
+                            sleep(Duration::from_millis(100));
+                        } else {
+                            break;
+                        }
+                    }
+                    let height = {
+                        let mut data = downloader.data.write().unwrap();
+                        let next_height = data.next_height;
+                        if next_height > data.max_height {
+                            break;
+                        }
+                        data.next_height += 1;
+                        next_height
+                    };
+                    let block_hash = block_hashes.read().unwrap()[(height - start_height) as usize];
+                    let block = downloader.bitcoin_rest.get_block(block_hash).await;
+                    if block.is_err() {
+                        println!("Failed to fetch block {}.", height);
+                    }
+                    let block = block.unwrap();
+                    downloader.data.write().unwrap().blocks.insert(height, block);
                 }
-            }
-            let block_hash = block_hashes[(height - start_height) as usize];
-            let block = self.bitcoin_rest.get_block(block_hash).await?;
-            self.data.write().unwrap().blocks.insert(height, block);
+            });
         }
         Ok(())
     }
@@ -223,8 +268,17 @@ impl BlockDownloader {
 
 #[tokio::main]
 async fn main() {
-    let mut downloader = BlockDownloader::new(None);
-    downloader.run_spawn(0);
+    let args: Vec<String> = std::env::args().collect();
+    let rest_endpoint = if args.len() >= 3 {
+        Some(args[2].clone())
+    } else {
+        None
+    };
+    let mut downloader = BlockDownloader::new(rest_endpoint)
+        .set_concurrency(4)
+        ;
+    downloader.run(0).await.unwrap();
+    println!("Downloader started.");
     let mut lap_time = SystemTime::now();
     let mut fetched_blocks: usize = 0;
     loop {
