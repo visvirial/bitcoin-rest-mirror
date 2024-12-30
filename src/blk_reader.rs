@@ -83,6 +83,9 @@ impl BlkReader {
     pub fn registered_block_count(&self) -> usize {
         self.data.read().unwrap().registered_block_count()
     }
+    pub fn processed_block_count(&self) -> usize {
+        self.data.read().unwrap().blocks_by_height.len()
+    }
     pub fn get_next_height(&self) -> u32 {
         self.data.read().unwrap().next_height
     }
@@ -181,7 +184,7 @@ impl BlkReader {
             let mut this = self.clone();
             let handle = tokio::spawn(async move {
                 loop {
-                    if this.registered_block_count() >= this.max_blocks as usize {
+                    if this.processed_block_count() >= this.max_blocks as usize {
                         //println!("Max blocks reached.");
                         sleep(Duration::from_millis(100)).await;
                         continue;
