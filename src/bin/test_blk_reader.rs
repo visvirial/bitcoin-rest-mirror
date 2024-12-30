@@ -14,6 +14,7 @@ use bitcoin::consensus::{
 use bitcoin_rest_mirror::{
     load_config,
     blk_reader::BlkReader,
+    block_downloader::BitcoinRest,
 };
 
 #[tokio::main]
@@ -27,9 +28,13 @@ async fn main() {
     // Load config.
     let config = load_config();
     let chain_config = &config["chains"][chain.as_str()];
+    // Initialize BitcoinRest.
+    let bitcoin_rest = BitcoinRest::new(Some(chain_config["restUrl"].as_str().unwrap().to_string()));
     // Initialize BlkReader.
     let blocks_dir = chain_config["blocksDir"].as_str().unwrap().to_string();
     let mut blk_reader = BlkReader::new(blocks_dir.clone());
+    blk_reader.init(&bitcoin_rest, 0).await;
+    // Start reading blocks.
     println!("Reading blocks from: {}", blocks_dir);
     let concurrency = 4;
     blk_reader.run_threads(concurrency).await;

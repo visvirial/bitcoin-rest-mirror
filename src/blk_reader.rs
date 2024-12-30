@@ -1,6 +1,7 @@
 
 use std::io::prelude::*;
 use std::io::BufReader;
+use std::time::SystemTime;
 use std::fs::File;
 use std::sync::{
     Arc,
@@ -8,53 +9,41 @@ use std::sync::{
 };
 use std::collections::{
     HashMap,
-    VecDeque,
 };
 use bytes::Bytes;
 use tokio::time::{
     sleep,
     Duration,
 };
-use bitcoin::block::{
-    Header,
+use bitcoin::{
+    block::Header,
+    consensus::Decodable,
 };
-use bitcoin::consensus::{
-    Decodable,
-    //Encodable,
+use bitcoin_hashes::Sha256d;
+
+use crate::{
+    block_downloader::BitcoinRest,
 };
 
 #[derive(Clone)]
 pub struct BlkReaderData {
-    next_index: u32,
-    unprocessed_blocks: Vec<Bytes>,
-    // Block hash -> block.
-    blocks_by_hash: HashMap<[u8; 32], Bytes>,
-    // Parent hash -> block hash.
-    parents: HashMap<[u8; 32], [u8; 32]>,
-    // Block height -> block.
-    blocks_by_height: VecDeque<Bytes>,
+    // Block height -> block,
+    blocks: HashMap<u32, Bytes>,
+    block_height_by_hash: HashMap<[u8; 32], u32>,
+    next_blk_index: u32,
     next_height: u32,
-    current_hash: [u8; 32],
     all_read: bool,
 }
 
 impl BlkReaderData {
     pub fn new() -> Self {
         Self {
-            next_index: 0,
-            unprocessed_blocks: Vec::new(),
-            blocks_by_hash: HashMap::new(),
-            parents: HashMap::new(),
-            blocks_by_height: VecDeque::new(),
+            blocks: HashMap::new(),
+            block_height_by_hash: HashMap::new(),
+            next_blk_index: 0,
             next_height: 0,
-            current_hash: [0u8; 32],
             all_read: false,
         }
-    }
-    pub fn registered_block_count(&self) -> usize {
-        self.unprocessed_blocks.len() +
-        self.blocks_by_hash.len() +
-        self.blocks_by_height.len()
     }
 }
 
@@ -73,6 +62,24 @@ impl BlkReader {
             data: Arc::new(RwLock::new(BlkReaderData::new())),
         }
     }
+    pub async fn init(&self, bitcoin_rest: &BitcoinRest, starting_height: u32) {
+        // Get starting block hash.
+        let start_block_hash = bitcoin_rest.get_blockhashbyheight(starting_height).await.unwrap();
+        println!("Starting block hash: {}", hex::encode(start_block_hash));
+        // Download all block headers.
+        println!("Fetching all block headers...");
+        let start_time = SystemTime::now();
+        let headers = bitcoin_rest.get_all_headers(start_block_hash, None).await.unwrap();
+        let blocks_len = headers.len();
+        println!("Fetched {} block headers in {}ms.", blocks_len, start_time.elapsed().unwrap().as_millis());
+        // Convert to block_height_by_hash.
+        for (offset, header) in headers.iter().enumerate() {
+            let block_hash = Sha256d::hash(header).to_byte_array();
+            let height = starting_height + offset as u32;
+            self.data.write().unwrap().block_height_by_hash.insert(block_hash, height);
+        }
+        self.data.write().unwrap().next_height = starting_height;
+    }
     pub fn is_all_read(&self) -> bool {
         self.data.read().unwrap().all_read
     }
@@ -80,17 +87,11 @@ impl BlkReader {
         self.max_blocks = max_blocks;
         self
     }
-    pub fn registered_block_count(&self) -> usize {
-        self.data.read().unwrap().registered_block_count()
-    }
-    pub fn processed_block_count(&self) -> usize {
-        self.data.read().unwrap().blocks_by_height.len()
+    pub fn get_registered_block_count(&self) -> usize {
+        self.data.read().unwrap().blocks.len()
     }
     pub fn get_next_height(&self) -> u32 {
         self.data.read().unwrap().next_height
-    }
-    pub fn processed_blocks_count(&self) -> usize {
-        self.data.read().unwrap().blocks_by_height.len()
     }
     fn read_file(&mut self, index: u32) -> Result<u32, ()> {
         let path = format!("{}/blk{:05}.dat", self.blocks_dir, index);
@@ -121,61 +122,35 @@ impl BlkReader {
                 return Ok(block_count);
             }
             block_count += 1;
-            // Save blcok.
-            self.data.write().unwrap().unprocessed_blocks.push(Bytes::from(block_vec));
-        }
-    }
-    pub fn read_next_file(&mut self) -> Result<u32, ()> {
-        let next_index = {
-            let mut data = self.data.write().unwrap();
-            let next_index = data.next_index;
-            data.next_index += 1;
-            next_index
-        };
-        let block_count = self.read_file(next_index);
-        if block_count.is_err() {
-            return Err(());
-        }
-        Ok(block_count.unwrap())
-    }
-    pub fn process_blocks(&mut self) {
-        // Decode blocks.
-        loop {
-            let mut data = self.data.write().unwrap();
-            let block_bytes = data.unprocessed_blocks.pop();
-            if block_bytes.is_none() {
-                break;
-            }
-            let block_bytes = block_bytes.unwrap();
-            let block_header = Header::consensus_decode(&mut block_bytes.as_ref());
+            // Compute block hash.
+            let block_header = Header::consensus_decode::<&[u8]>(&mut block_vec.as_ref());
             if block_header.is_err() {
+                //println!("Failed to decode block header.");
                 continue;
             }
             let block_header = block_header.unwrap();
             let block_hash: [u8; 32] = *block_header.block_hash().as_ref();
-            data.blocks_by_hash.insert(block_hash, block_bytes);
-            data.parents.insert(*block_header.prev_blockhash.as_ref(), block_hash);
-        }
-        // Find child block.
-        loop {
-            let mut data = self.data.write().unwrap();
-            let current_hash = data.current_hash;
-            let child_hash = data.parents.remove(&current_hash);
-            if child_hash.is_none() {
-                return;
+            let block_height = self.data.read().unwrap().block_height_by_hash.get(&block_hash).cloned();
+            if block_height.is_none() {
+                //println!("Block height not found for hash: {}", hex::encode(block_hash));
+                continue;
             }
-            let child_hash = child_hash.unwrap();
-            let child_block = data.blocks_by_hash.remove(&child_hash).unwrap();
-            data.blocks_by_height.push_back(child_block);
-            data.current_hash = child_hash;
+            let block_height = block_height.unwrap();
+            // Save blcok.
+            self.data.write().unwrap().blocks.insert(block_height, Bytes::from(block_vec));
         }
     }
-    pub fn read_and_process_next_file(&mut self) -> Result<u32, ()> {
-        let block_count = self.read_next_file();
+    pub fn read_next_file(&mut self) -> Result<u32, ()> {
+        let next_blk_index = {
+            let mut data = self.data.write().unwrap();
+            let next_blk_index = data.next_blk_index;
+            data.next_blk_index += 1;
+            next_blk_index
+        };
+        let block_count = self.read_file(next_blk_index);
         if block_count.is_err() {
             return Err(());
         }
-        self.process_blocks();
         Ok(block_count.unwrap())
     }
     pub async fn run_threads(&mut self, concurrency: usize) {
@@ -184,12 +159,12 @@ impl BlkReader {
             let mut this = self.clone();
             let handle = tokio::spawn(async move {
                 loop {
-                    if this.processed_block_count() >= this.max_blocks as usize {
+                    if this.get_registered_block_count() >= this.max_blocks as usize {
                         //println!("Max blocks reached.");
                         sleep(Duration::from_millis(100)).await;
                         continue;
                     }
-                    let result = this.read_and_process_next_file();
+                    let result = this.read_next_file();
                     if result.is_err() {
                         break;
                     }
@@ -198,17 +173,17 @@ impl BlkReader {
             handles.push(handle);
         }
         {
-            let mut this = self.clone();
+            let this = self.clone();
             tokio::spawn(async move {
                 futures::future::join_all(handles).await;
-                this.process_blocks();
                 this.data.write().unwrap().all_read = true;
             });
         }
     }
     pub fn try_get_next_block(&mut self) -> Option<(u32, Bytes)> {
         let mut data = self.data.write().unwrap();
-        if let Some(block) = data.blocks_by_height.pop_front() {
+        let next_height = data.next_height;
+        if let Some(block) = data.blocks.remove(&next_height) {
             let height = data.next_height;
             data.next_height += 1;
             return Some((height, block));

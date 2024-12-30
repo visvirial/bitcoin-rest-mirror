@@ -19,6 +19,7 @@ use num_format::{
 use bitcoin_rest_mirror::{
     load_config,
     blk_reader::BlkReader,
+    block_downloader::BitcoinRest,
     client::{
         RedisClientPool,
         Client,
@@ -184,10 +185,6 @@ async fn main() {
     // Initialize client.
     let redis_client = RedisClientPool::new(redis_url);
     let client = Client::new(redis_client, chain.clone(), None);
-    // Initialize blk_reader.
-    let blocks_dir = chain_config["blocksDir"].as_str().expect("blocksDir not set").to_string();
-    println!("Reading blocks from: {}", blocks_dir);
-    let mut blk_reader = BlkReader::new(blocks_dir);
     // Initialize block downloader.
     let concurrency = config["downloader"]["concurrency"].as_i64().unwrap_or(4) as usize;
     let mut downloader = BlockDownloader::new(Some(chain_config["restUrl"].as_str().expect("restUrl not set").to_string()))
@@ -216,6 +213,13 @@ async fn main() {
     };
     // Do initial sync.
     let blocks_processed = if next_block_height == 0 {
+        // Initialize blk_reader.
+        let blocks_dir = chain_config["blocksDir"].as_str().expect("blocksDir not set").to_string();
+        println!("Reading blocks from: {}", blocks_dir);
+        // Initialize BitcoinRest.
+        let bitcoin_rest = BitcoinRest::new(Some(chain_config["restUrl"].as_str().unwrap().to_string()));
+        let mut blk_reader = BlkReader::new(blocks_dir);
+        blk_reader.init(&bitcoin_rest, 0).await;
         println!("Starting initial sync...");
         sync_initial(&mut blk_reader, &client).await
     } else {
