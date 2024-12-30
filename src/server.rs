@@ -206,7 +206,8 @@ mod tests {
                 .text();
             assert_eq!(block_headers_response, hex::encode(&block_header));
             for tx in block.txdata {
-                let txid = tx.compute_txid();
+                let mut txid: [u8; 32] = *tx.compute_txid().as_ref();
+                txid.reverse();
                 let tx_response = server.get(format!("/rest/tx/{}.hex", hex::encode(txid)).as_str())
                     .await
                     .text();

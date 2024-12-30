@@ -1,12 +1,22 @@
 
+use std::io::{
+    Read,
+    BufReader,
+};
 use std::sync::{
     Arc,
 };
+use bytes::{
+    Bytes,
+};
 use redis::Commands;
-use bitcoin::block::Block;
-use bitcoin::consensus::{
-    Encodable,
-    Decodable,
+use bitcoin::{
+    VarInt,
+    block::Block,
+    consensus::{
+        Encodable,
+        Decodable,
+    }
 };
 
 pub trait KVS: Send + Sync {
@@ -38,6 +48,83 @@ impl KVS for RedisClientPool {
     }
     fn set(&self, key: &str, value: &[u8]) {
         let _: () = self.pool.get().unwrap().set(key, value).unwrap();
+    }
+}
+
+#[derive(Clone)]
+pub struct KVSBlock {
+    header: [u8; 80],
+    txdata: Vec<Bytes>,
+}
+
+impl Encodable for KVSBlock {
+    fn consensus_encode<W: bitcoin::io::Write + ?Sized>(&self, writer: &mut W) -> Result<usize, bitcoin::io::Error> {
+        let mut written = 0;
+        writer.write_all(&self.header)?;
+        written += 80;
+        let tx_len = VarInt::from(self.txdata.len());
+        let mut tx_len_vec = Vec::new();
+        tx_len.consensus_encode(&mut tx_len_vec.as_mut())?;
+        writer.write_all(&tx_len_vec)?;
+        written += tx_len.size();
+        for tx in &self.txdata {
+            writer.write_all(tx.as_ref())?;
+            written += tx.len();
+        }
+        Ok(written)
+    }
+}
+
+impl Decodable for KVSBlock {
+    fn consensus_decode<R: bitcoin::io::Read + ?Sized>(reader: &mut R) -> Result<Self, bitcoin::consensus::encode::Error> {
+        let block = Block::consensus_decode(reader)?;
+        let mut header = [0u8; 80];
+        block.header.consensus_encode(&mut header.as_mut()).unwrap();
+        let txdata = block.txdata.iter().map(|tx| {
+            let mut tx_vec = Vec::new();
+            tx.consensus_encode(&mut tx_vec).unwrap();
+            Bytes::from(tx_vec)
+        }).collect();
+        Ok(Self {
+            header,
+            txdata,
+        })
+    }
+}
+
+impl TryFrom<Bytes> for KVSBlock {
+    type Error = std::io::Error;
+    fn try_from(block: Bytes) -> Result<Self, Self::Error> {
+        let mut reader = BufReader::new(block.as_ref());
+        let mut header = [0u8; 80];
+        reader.read_exact(&mut header)?;
+        let mut txdata: Vec<Bytes> = Vec::new();
+        loop {
+            let tx_size = VarInt::consensus_decode(&mut reader);
+            if tx_size.is_err() {
+                break;
+            }
+            let tx_size = tx_size.unwrap();
+            let mut tx = vec![0u8; tx_size.0 as usize];
+            reader.read_exact(&mut tx)?;
+            txdata.push(Bytes::from(tx));
+        }
+        Ok(Self {
+            header,
+            txdata,
+        })
+    }
+}
+
+impl From<KVSBlock> for Bytes {
+    fn from(block: KVSBlock) -> Self {
+        let mut block_vec = block.header.to_vec();
+        for tx in block.txdata {
+            let tx_size = VarInt::from(tx.len());
+            tx_size.consensus_encode(&mut block_vec).unwrap();
+            block_vec.extend(tx.as_ref());
+        }
+        Bytes::from(block_vec)
     }
 }
 
@@ -155,8 +242,7 @@ impl Client {
         // Register transactions and hashes.
         let mut tx_hashes = Vec::new();
         for tx in block.txdata {
-            let mut tx_hash: [u8; 32] = *tx.compute_txid().as_ref();
-            tx_hash.reverse();
+            let tx_hash: [u8; 32] = *tx.compute_txid().as_ref();
             tx_hashes.push(tx_hash);
             let mut tx_vec = Vec::new();
             tx.consensus_encode(&mut tx_vec).unwrap();
@@ -192,7 +278,7 @@ impl Client {
             return None;
         }
         let txs = txs.into_iter().flatten().collect::<Vec<Vec<u8>>>();
-        let tx_length_varint = bitcoin::VarInt::from(txs.len());
+        let tx_length_varint = VarInt::from(txs.len());
         let mut tx_length_vec = Vec::new();
         tx_length_varint.consensus_encode(&mut tx_length_vec).unwrap();
         let mut block = Vec::new();

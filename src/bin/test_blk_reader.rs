@@ -3,16 +3,10 @@ use num_format::{
     Locale,
     ToFormattedString,
 };
-use bitcoin::block::{
-    Header,
-};
-use bitcoin::consensus::{
-    Decodable,
-    //Encodable,
-};
 
 use bitcoin_rest_mirror::{
     load_config,
+    block_to_block_hash,
     blk_reader::BlkReader,
     block_downloader::BitcoinRest,
 };
@@ -41,8 +35,7 @@ async fn main() {
     let mut last_print = std::time::Instant::now();
     while let Some((height, block_bytes)) = blk_reader.get_next_block().await {
         if last_print.elapsed().as_secs() >= 1 {
-            let block_header = Header::consensus_decode(&mut block_bytes.as_ref()).unwrap();
-            let mut block_hash: [u8; 32] = *block_header.block_hash().as_ref();
+            let mut block_hash = block_to_block_hash(&block_bytes);
             block_hash.reverse();
             println!(
                 "Block height: #{}, Hash: {}, Block size: {}",

@@ -15,13 +15,9 @@ use tokio::time::{
     sleep,
     Duration,
 };
-use bitcoin::{
-    block::Header,
-    consensus::Decodable,
-};
-use bitcoin_hashes::Sha256d;
 
 use crate::{
+    block_to_block_hash,
     block_downloader::BitcoinRest,
 };
 
@@ -74,7 +70,7 @@ impl BlkReader {
         println!("Fetched {} block headers in {}ms.", blocks_len, start_time.elapsed().unwrap().as_millis());
         // Convert to block_height_by_hash.
         for (offset, header) in headers.iter().enumerate() {
-            let block_hash = Sha256d::hash(header).to_byte_array();
+            let block_hash = block_to_block_hash(header);
             let height = starting_height + offset as u32;
             self.data.write().unwrap().block_height_by_hash.insert(block_hash, height);
         }
@@ -123,13 +119,7 @@ impl BlkReader {
             }
             block_count += 1;
             // Compute block hash.
-            let block_header = Header::consensus_decode::<&[u8]>(&mut block_vec.as_ref());
-            if block_header.is_err() {
-                //println!("Failed to decode block header.");
-                continue;
-            }
-            let block_header = block_header.unwrap();
-            let block_hash: [u8; 32] = *block_header.block_hash().as_ref();
+            let block_hash = block_to_block_hash(&block_vec);
             let block_height = self.data.read().unwrap().block_height_by_hash.get(&block_hash).cloned();
             if block_height.is_none() {
                 //println!("Block height not found for hash: {}", hex::encode(block_hash));

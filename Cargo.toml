@@ -21,6 +21,7 @@ bitcoin = "0.32"
 bitcoin_hashes = "0.16"
 
 [dev-dependencies]
+criterion = "0.5"
 axum-test = "16.4"
 redis-test = "0.6"
 
@@ -39,4 +40,8 @@ path = "src/bin/test_blk_reader.rs"
 [[bin]]
 name = "test_block_downloader"
 path = "src/bin/test_block_downloader.rs"
+
+[[bench]]
+name = "block_serialization"
+harness = false
 
