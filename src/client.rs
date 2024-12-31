@@ -26,7 +26,7 @@ pub trait KVS: Send + Sync {
     fn set(&self, key: &str, value: &[u8]);
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RedisClientPool {
     pool: r2d2::Pool<redis::Client>,
 }
@@ -54,9 +54,46 @@ impl KVS for RedisClientPool {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct KVSTxData {
+    lens: Vec<usize>,
+    txdata: Binary,
+}
+
+impl KVSTxData {
+    pub fn new<R: Read + bitcoin::io::Read>(read: &mut R) -> Self {
+        // Get the number of transactions.
+        let tx_len = VarInt::consensus_decode(read).unwrap().0 as usize;
+        // Read transaction sizes.
+        let mut lens = Vec::with_capacity(tx_len);
+        for _ in 0..tx_len {
+            let tx_size = VarInt::consensus_decode(read).unwrap().0 as usize;
+            lens.push(tx_size);
+        }
+        let mut txdata = Vec::new();
+        read.read_to_end(&mut txdata).unwrap();
+        Self {
+            lens,
+            txdata,
+        }
+    }
+    pub fn len(&self) -> usize {
+        self.lens.len()
+    }
+    // Get the i-th transaction.
+    pub fn get(&self, index: usize) -> Option<&[u8]> {
+        if index >= self.lens.len() {
+            return None;
+        }
+        let start = self.lens.iter().take(index).sum::<usize>();
+        let end = start + self.lens[index];
+        Some(&self.txdata[start..end])
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct KVSBlock {
     header: [u8; 80],
-    txdata: Vec<Binary>,
+    txdata: KVSTxData,
 }
 
 impl Encodable for KVSBlock {
@@ -67,10 +104,8 @@ impl Encodable for KVSBlock {
         let tx_len = VarInt::from(self.txdata.len());
         tx_len.consensus_encode(writer)?;
         written += tx_len.size();
-        for tx in &self.txdata {
-            writer.emit_slice(tx.as_ref())?;
-            written += tx.len();
-        }
+        writer.emit_slice(&self.txdata.txdata)?;
+        written += self.txdata.txdata.len();
         Ok(written)
     }
 }
@@ -80,11 +115,15 @@ impl Decodable for KVSBlock {
         let block = Block::consensus_decode(reader)?;
         let mut header = [0u8; 80];
         block.header.consensus_encode(&mut header.as_mut()).unwrap();
-        let txdata = block.txdata.iter().map(|tx| {
+        let (lens, txdata): (Vec<usize>, Vec<Binary>) = block.txdata.iter().map(|tx| {
             let mut tx_vec = Vec::new();
             tx.consensus_encode(&mut tx_vec).unwrap();
-            tx_vec
-        }).collect();
+            (tx_vec.len(), tx_vec)
+        }).unzip();
+        let txdata = KVSTxData {
+            lens,
+            txdata: txdata.concat(),
+        };
         Ok(Self {
             header,
             txdata,
@@ -98,17 +137,7 @@ impl TryFrom<Binary> for KVSBlock {
         let mut cursor = Cursor::new(block);
         let mut header = [0u8; 80];
         cursor.read_exact(&mut header)?;
-        let mut txdata: Vec<Binary> = Vec::new();
-        loop {
-            let tx_size = VarInt::consensus_decode(&mut cursor);
-            if tx_size.is_err() {
-                break;
-            }
-            let tx_size = tx_size.unwrap();
-            let mut tx = vec![0u8; tx_size.0 as usize];
-            cursor.read_exact(&mut tx)?;
-            txdata.push(tx);
-        }
+        let txdata = KVSTxData::new(&mut cursor);
         Ok(Self {
             header,
             txdata,
@@ -119,11 +148,13 @@ impl TryFrom<Binary> for KVSBlock {
 impl From<KVSBlock> for Binary {
     fn from(block: KVSBlock) -> Self {
         let mut block_vec = block.header.to_vec();
-        for tx in block.txdata {
-            let tx_size = VarInt::from(tx.len());
-            tx_size.consensus_encode(&mut block_vec).unwrap();
-            block_vec.extend(&tx);
+        let tx_len = VarInt::from(block.txdata.len());
+        tx_len.consensus_encode(&mut block_vec).unwrap();
+        for len in block.txdata.lens {
+            let tx_len = VarInt::from(len);
+            tx_len.consensus_encode(&mut block_vec).unwrap();
         }
+        block_vec.extend(block.txdata.txdata);
         block_vec
     }
 }
@@ -300,7 +331,7 @@ pub mod tests {
     use bitcoin::block::Block;
     use bitcoin::consensus::Decodable;
     
-    #[derive(Clone)]
+    #[derive(Debug, Clone)]
     struct MockKVS {
         db: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     }
@@ -356,7 +387,7 @@ pub mod tests {
             for i in 0..block.txdata.len() {
                 let mut tx_vec = Vec::new();
                 block.txdata[i].consensus_encode(&mut tx_vec).unwrap();
-                assert_eq!(kvs_block.txdata[i], tx_vec);
+                assert_eq!(kvs_block.txdata.get(i), Some(tx_vec.as_slice()));
             }
         }
         #[test]
@@ -365,14 +396,7 @@ pub mod tests {
             let block = Block::consensus_decode(&mut blocks[0].as_slice()).unwrap();
             let mut block_header_vec = [0u8; 80];
             block.header.consensus_encode(&mut block_header_vec.as_mut()).unwrap();
-            let kvs_block = KVSBlock {
-                header: block_header_vec,
-                txdata: block.txdata.iter().map(|tx| {
-                    let mut tx_vec = Vec::new();
-                    tx.consensus_encode(&mut tx_vec).unwrap();
-                    tx_vec
-                }).collect(),
-            };
+            let kvs_block = KVSBlock::consensus_decode(&mut blocks[0].as_slice()).unwrap();
             let mut kvs_block_vec = Vec::new();
             kvs_block.consensus_encode(&mut kvs_block_vec).unwrap();
             assert_eq!(hex::encode(&kvs_block_vec), hex::encode(&blocks[0]));

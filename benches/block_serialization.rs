@@ -11,20 +11,23 @@ use bitcoin::consensus::{
     Decodable,
 };
 
-use bitcoin_rest_mirror::client::KVSBlock;
+use bitcoin_rest_mirror::{
+    Binary,
+    client::KVSBlock,
+};
 
-pub fn load_block_800_000() -> bytes::Bytes {
+pub fn load_block_800_000() -> Binary {
     let mut f = File::open("./fixture/blocks/block_800000.bin").expect("block_800000.bin file not found");
     let mut block = Vec::new();
     f.read_to_end(&mut block).expect("Something went wrong reading the file");
-    block.into()
+    block
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
     let block_bytes = load_block_800_000();
-    let block_bitcoin = Block::consensus_decode(&mut block_bytes.as_ref()).unwrap();
-    let block_kvs = KVSBlock::consensus_decode(&mut block_bytes.as_ref()).unwrap();
-    let block_kvs_bytes = bytes::Bytes::from(block_kvs.clone());
+    let block_bitcoin = Block::consensus_decode(&mut block_bytes.as_slice()).unwrap();
+    let block_kvs = KVSBlock::consensus_decode(&mut block_bytes.as_slice()).unwrap();
+    let block_kvs_bytes: Binary = block_kvs.clone().into();
     c.bench_function("load block 800_000", |b| b.iter(|| {
         load_block_800_000();
     }));
@@ -33,20 +36,20 @@ fn criterion_benchmark(c: &mut Criterion) {
         block_bitcoin.consensus_encode(&mut vec).unwrap();
     }));
     c.bench_function("rust-bitcoin: consensus_decode", |b| b.iter(|| {
-        Block::consensus_decode(&mut block_bytes.as_ref()).unwrap();
+        Block::consensus_decode(&mut block_bytes.as_slice()).unwrap();
     }));
     c.bench_function("KVSBlock: consensus_encode", |b| b.iter(|| {
         let mut vec = Vec::new();
         block_kvs.consensus_encode(&mut vec).unwrap();
     }));
     c.bench_function("KVSBlock: consensus_decode", |b| b.iter(|| {
-        KVSBlock::consensus_decode(&mut block_bytes.as_ref()).unwrap();
+        KVSBlock::consensus_decode(&mut block_bytes.as_slice()).unwrap();
     }));
-    c.bench_function("KVSBlock: try_from Bytes", |b| b.iter(|| {
+    c.bench_function("KVSBlock: try_from Binary", |b| b.iter(|| {
         KVSBlock::try_from(block_kvs_bytes.clone()).unwrap();
     }));
-    c.bench_function("KVSBlock: into Bytes", |b| b.iter(|| {
-        let _bytes: bytes::Bytes = block_kvs.clone().into();
+    c.bench_function("KVSBlock: into Binary", |b| b.iter(|| {
+        let _: Binary = block_kvs.clone().into();
     }));
 }
 
