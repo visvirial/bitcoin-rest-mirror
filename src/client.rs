@@ -1,13 +1,10 @@
 
 use std::io::{
     Read,
-    BufReader,
+    Cursor,
 };
 use std::sync::{
     Arc,
-};
-use bytes::{
-    Bytes,
 };
 use redis::Commands;
 use bitcoin::{
@@ -20,14 +17,18 @@ use bitcoin::{
     }
 };
 
+use crate::{
+    Binary,
+};
+
 pub trait KVS: Send + Sync {
-    fn get(&self, key: &str) -> Option<Vec<u8>>;
+    fn get(&self, key: &str) -> Option<Binary>;
     fn set(&self, key: &str, value: &[u8]);
 }
 
 #[derive(Clone)]
 pub struct RedisClientPool {
-    pool: Arc<r2d2::Pool<redis::Client>>,
+    pool: r2d2::Pool<redis::Client>,
 }
 
 impl RedisClientPool {
@@ -35,7 +36,7 @@ impl RedisClientPool {
         let client = redis::Client::open(redis_url).unwrap();
         let pool_size = std::thread::available_parallelism().unwrap().get();
         println!("Redis connection pool size: {}", pool_size);
-        let pool = Arc::new(r2d2::Pool::builder().max_size(pool_size as u32).build(client).unwrap());
+        let pool = r2d2::Pool::builder().max_size(pool_size as u32).build(client).unwrap();
         Self {
             pool,
         }
@@ -43,8 +44,8 @@ impl RedisClientPool {
 }
 
 impl KVS for RedisClientPool {
-    fn get(&self, key: &str) -> Option<Vec<u8>> {
-        let value: Option<Vec<u8>> = self.pool.get().unwrap().get(&key).unwrap();
+    fn get(&self, key: &str) -> Option<Binary> {
+        let value: Option<Binary> = self.pool.get().unwrap().get(&key).unwrap();
         value
     }
     fn set(&self, key: &str, value: &[u8]) {
@@ -52,10 +53,10 @@ impl KVS for RedisClientPool {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct KVSBlock {
     header: [u8; 80],
-    txdata: Vec<Bytes>,
+    txdata: Vec<Binary>,
 }
 
 impl Encodable for KVSBlock {
@@ -82,7 +83,7 @@ impl Decodable for KVSBlock {
         let txdata = block.txdata.iter().map(|tx| {
             let mut tx_vec = Vec::new();
             tx.consensus_encode(&mut tx_vec).unwrap();
-            Bytes::from(tx_vec)
+            tx_vec
         }).collect();
         Ok(Self {
             header,
@@ -91,22 +92,22 @@ impl Decodable for KVSBlock {
     }
 }
 
-impl TryFrom<Bytes> for KVSBlock {
+impl TryFrom<Binary> for KVSBlock {
     type Error = std::io::Error;
-    fn try_from(block: Bytes) -> Result<Self, Self::Error> {
-        let mut reader = BufReader::new(block.as_ref());
+    fn try_from(block: Binary) -> Result<Self, Self::Error> {
+        let mut cursor = Cursor::new(block);
         let mut header = [0u8; 80];
-        reader.read_exact(&mut header)?;
-        let mut txdata: Vec<Bytes> = Vec::new();
+        cursor.read_exact(&mut header)?;
+        let mut txdata: Vec<Binary> = Vec::new();
         loop {
-            let tx_size = VarInt::consensus_decode(&mut reader);
+            let tx_size = VarInt::consensus_decode(&mut cursor);
             if tx_size.is_err() {
                 break;
             }
             let tx_size = tx_size.unwrap();
             let mut tx = vec![0u8; tx_size.0 as usize];
-            reader.read_exact(&mut tx)?;
-            txdata.push(Bytes::from(tx));
+            cursor.read_exact(&mut tx)?;
+            txdata.push(tx);
         }
         Ok(Self {
             header,
@@ -115,15 +116,15 @@ impl TryFrom<Bytes> for KVSBlock {
     }
 }
 
-impl From<KVSBlock> for Bytes {
+impl From<KVSBlock> for Binary {
     fn from(block: KVSBlock) -> Self {
         let mut block_vec = block.header.to_vec();
         for tx in block.txdata {
             let tx_size = VarInt::from(tx.len());
             tx_size.consensus_encode(&mut block_vec).unwrap();
-            block_vec.extend(tx.as_ref());
+            block_vec.extend(&tx);
         }
-        Bytes::from(block_vec)
+        block_vec
     }
 }
 
@@ -145,7 +146,7 @@ impl Client {
     fn get_key(&self, key_prefix: &str, key: &str) -> String {
         format!("{}:{}:{}:{}", self.prefix, self.chain, key_prefix, key)
     }
-    fn get(&self, key_prefix: &str, key: &str) -> Option<Vec<u8>> {
+    fn get(&self, key_prefix: &str, key: &str) -> Option<Binary> {
         let key = self.get_key(key_prefix, key);
         self.kvs.get(&key)
     }
@@ -165,7 +166,7 @@ impl Client {
         self.kvs.set(format!("{}:{}:nextBlockHeight", self.prefix, self.chain).as_str(), &Self::height_to_slice(height));
     }
     pub fn get_next_block_height(&self) -> u32 {
-        let height_vec: Option<Vec<u8>> = self.kvs.get(format!("{}:{}:nextBlockHeight", self.prefix, self.chain).as_str());
+        let height_vec: Option<Binary> = self.kvs.get(format!("{}:{}:nextBlockHeight", self.prefix, self.chain).as_str());
         match height_vec {
             Some(height_vec) => {
                 Self::slice_to_height(&height_vec.try_into().unwrap())
@@ -232,11 +233,11 @@ impl Client {
     pub fn set_transaction(&self, tx_hash: &[u8; 32], tx: &[u8]) {
         self.set("transaction", hex::encode(tx_hash).as_str(), tx);
     }
-    pub fn get_transaction(&self, tx_hash: &[u8; 32]) -> Option<Vec<u8>> {
+    pub fn get_transaction(&self, tx_hash: &[u8; 32]) -> Option<Binary> {
         self.get("transaction", hex::encode(tx_hash).as_str())
     }
-    pub fn add_block(&self, height: u32, block_vec: Vec<u8>, set_next_block_height: Option<bool>) {
-        let block = Block::consensus_decode(&mut block_vec.as_slice()).unwrap();
+    pub fn add_block(&self, height: u32, block_bytes: Binary, set_next_block_height: Option<bool>) {
+        let block = Block::consensus_decode(&mut block_bytes.as_slice()).unwrap();
         let block_hash: [u8; 32] = *block.block_hash().as_ref();
         // Register transactions and hashes.
         let mut tx_hashes = Vec::new();
@@ -328,8 +329,8 @@ pub mod tests {
         client
     }
     
-    pub fn load_blocks() -> Vec<Vec<u8>> {
-        let mut blocks: Vec<Vec<u8>> = Vec::new();
+    pub fn load_blocks() -> Vec<Binary> {
+        let mut blocks: Vec<Binary> = Vec::new();
         for height in 0..1000 {
             let mut f = File::open(format!("./fixture/blocks/block_{}.bin", height)).expect(format!("block_{}.bin file not found", height).as_str());
             let mut block = Vec::new();
@@ -337,6 +338,53 @@ pub mod tests {
             blocks.push(block);
         }
         blocks
+    }
+    
+    mod kvs_block {
+        use super::*;
+        #[test]
+        fn consensus_decode() {
+            let blocks = load_blocks();
+            let kvs_block = KVSBlock::consensus_decode(&mut blocks[0].as_slice()).unwrap();
+            let block = Block::consensus_decode(&mut blocks[0].as_slice()).unwrap();
+            // Check header.
+            let mut block_header_vec = [0u8; 80];
+            block.header.consensus_encode(&mut block_header_vec.as_mut()).unwrap();
+            assert_eq!(kvs_block.header, block_header_vec);
+            // Check transactions.
+            assert_eq!(kvs_block.txdata.len(), block.txdata.len());
+            for i in 0..block.txdata.len() {
+                let mut tx_vec = Vec::new();
+                block.txdata[i].consensus_encode(&mut tx_vec).unwrap();
+                assert_eq!(kvs_block.txdata[i], tx_vec);
+            }
+        }
+        #[test]
+        fn consensus_encode() {
+            let blocks = load_blocks();
+            let block = Block::consensus_decode(&mut blocks[0].as_slice()).unwrap();
+            let mut block_header_vec = [0u8; 80];
+            block.header.consensus_encode(&mut block_header_vec.as_mut()).unwrap();
+            let kvs_block = KVSBlock {
+                header: block_header_vec,
+                txdata: block.txdata.iter().map(|tx| {
+                    let mut tx_vec = Vec::new();
+                    tx.consensus_encode(&mut tx_vec).unwrap();
+                    tx_vec
+                }).collect(),
+            };
+            let mut kvs_block_vec = Vec::new();
+            kvs_block.consensus_encode(&mut kvs_block_vec).unwrap();
+            assert_eq!(hex::encode(&kvs_block_vec), hex::encode(&blocks[0]));
+        }
+        #[test]
+        fn encode_decode() {
+            let blocks = load_blocks();
+            let kvs_block = KVSBlock::consensus_decode(&mut blocks[0].as_slice()).unwrap();
+            let kvs_block_vec: Binary = kvs_block.clone().into();
+            let kvs_block_decoded: KVSBlock = kvs_block_vec.try_into().unwrap();
+            assert_eq!(kvs_block, kvs_block_decoded);
+        }
     }
     
     mod next_block_height {
