@@ -28,12 +28,16 @@ fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("load block 800_000", |b| b.iter(|| {
         load_block_800_000();
     }));
-    c.bench_function("rust-bitcoin: consensus_decode", |b| b.iter(|| {
-        Block::consensus_decode(&mut block_bytes.as_ref()).unwrap();
-    }));
     c.bench_function("rust-bitcoin: consensus_encode", |b| b.iter(|| {
         let mut vec = Vec::new();
         block_bitcoin.consensus_encode(&mut vec).unwrap();
+    }));
+    c.bench_function("rust-bitcoin: consensus_decode", |b| b.iter(|| {
+        Block::consensus_decode(&mut block_bytes.as_ref()).unwrap();
+    }));
+    c.bench_function("KVSBlock: consensus_encode", |b| b.iter(|| {
+        let mut vec = Vec::new();
+        block_kvs.consensus_encode(&mut vec).unwrap();
     }));
     c.bench_function("KVSBlock: consensus_decode", |b| b.iter(|| {
         KVSBlock::consensus_decode(&mut block_bytes.as_ref()).unwrap();

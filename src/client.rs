@@ -16,6 +16,7 @@ use bitcoin::{
     consensus::{
         Encodable,
         Decodable,
+        WriteExt,
     }
 };
 
@@ -60,15 +61,13 @@ pub struct KVSBlock {
 impl Encodable for KVSBlock {
     fn consensus_encode<W: bitcoin::io::Write + ?Sized>(&self, writer: &mut W) -> Result<usize, bitcoin::io::Error> {
         let mut written = 0;
-        writer.write_all(&self.header)?;
+        writer.emit_slice(&self.header)?;
         written += 80;
         let tx_len = VarInt::from(self.txdata.len());
-        let mut tx_len_vec = Vec::new();
-        tx_len.consensus_encode(&mut tx_len_vec.as_mut())?;
-        writer.write_all(&tx_len_vec)?;
+        tx_len.consensus_encode(writer)?;
         written += tx_len.size();
         for tx in &self.txdata {
-            writer.write_all(tx.as_ref())?;
+            writer.emit_slice(tx.as_ref())?;
             written += tx.len();
         }
         Ok(written)
